@@ -87,11 +87,13 @@ hermes profile create secretary
 cp profiles/secretary/SOUL.md    ~/.hermes/profiles/secretary/SOUL.md
 cp profiles/secretary/config.yaml ~/.hermes/profiles/secretary/config.yaml
 
-# секреты — из шаблона, ВПИСАТЬ реальные значения руками:
+# секреты (Telegram) — из шаблона, ВПИСАТЬ реальные значения руками:
 cp profiles/.env.example ~/.hermes/profiles/secretary/.env
-nano ~/.hermes/profiles/secretary/.env   # вписать ключ CheapVibeCode, токен бота, свой TG id
+nano ~/.hermes/profiles/secretary/.env   # вписать токен бота и свой TG id
 ```
-Затем в `~/.hermes/profiles/secretary/config.yaml` замени `<CHEAPVIBECODE_BASE_URL>` и `<MODEL_ID>` на свои.
+Затем в `~/.hermes/profiles/secretary/config.yaml` замени `<CHEAPVIBECODE_BASE_URL>`, `<MODEL_ID>` и `<CHEAPVIBECODE_API_KEY>` на свои.
+
+⚠️ **Ключ провайдера — прямо в `config.yaml` (`model.api_key`), не в `.env`.** Для `provider: custom` Hermes читает API-ключ только оттуда; `OPENAI_API_KEY` в `.env` подхватывается лишь встроенным провайдером `openai-api` и для CheapVibeCode не работает. Если пропустить это — получишь на первом запросе зависание на ~180с, а на ретрае `HTTP 401 Invalid API key` (проверено на практике). Проще всего не редактировать файл руками, а прогнать `hermes -p secretary model` — мастер сам корректно впишет `provider`/`base_url`/`api_key` в нужное место.
 
 Проверь, что секретарь отвечает и характер подхватился:
 ```bash
