@@ -32,9 +32,24 @@
 ### 🟢 0. Добавить swap (обязательно на 1 ГБ RAM)
 Без swap агент на пике словит OOM и будет убит системой. Одноразово:
 ```bash
+sudo swapon --show
+grep -i swap /etc/fstab
+free -h
+```
+Некоторые образы (например AdminVPS Ubuntu 24.04) уже ставят небольшой своп (~512 МБ) по умолчанию. Если `swapon --show` уже показывает файл — не пересоздавай его, а **добавь ещё один**, чтобы в сумме получить ~2 ГБ:
+```bash
+sudo fallocate -l 1536M /swapfile2
+sudo chmod 600 /swapfile2
+sudo mkswap /swapfile2
+sudo swapon /swapfile2
+echo '/swapfile2 none swap sw 0 0' | sudo tee -a /etc/fstab
+free -h        # в строке Swap должно быть суммарно ~2.0Gi
+```
+Если `swapon --show` пустой (свопа нет вообще) — создавай с нуля на 2 ГБ:
+```bash
 sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-free -h        # убедись, что в строке Swap появились 2.0Gi
+free -h
 ```
 
 ### 🟢 1. Установить Hermes
