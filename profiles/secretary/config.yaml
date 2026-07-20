@@ -1,0 +1,42 @@
+# Конфиг профиля "secretary" для Hermes.
+#
+# Куда это кладётся на VPS:
+#   ~/.hermes/profiles/secretary/config.yaml
+#
+# ВАЖНО:
+#  - Секреты (api_key, токен Telegram-бота) сюда НЕ пишем — они в .env
+#    (см. profiles/.env.example). config.yaml — только несекретные настройки.
+#  - Значения в <угловых скобках> заменить на свои. Проще всего задать их
+#    мастерами `hermes -p secretary model` и `hermes -p secretary gateway setup`,
+#    а этот файл держать как версионируемый источник намерения (что включено,
+#    какой характер, какие тулсеты выключены).
+
+model:
+  provider: custom                 # CheapVibeCode — OpenAI-совместимый эндпоинт
+  base_url: <CHEAPVIBECODE_BASE_URL>   # напр. https://api.cheapvibecode.xxx/v1
+  default: <MODEL_ID>              # проверенная модель, напр. gpt-5.6
+  # context_length: 200000         # раскомментировать, если авто-детект занижает
+  # api_key берётся из .env (переменная провайдера custom), НЕ здесь.
+
+agent:
+  # Секретарь — лёгкий. Выключаем всё тяжёлое и опасное; оставляем только
+  # то, что реально нужно для времени/напоминаний/сводок.
+  # Оставлены (не в списке ниже): memory, cronjob, session_search, web,
+  #   skills, todo.
+  # Выключены:
+  disabled_toolsets:
+    - terminal        # секретарю не нужен шелл
+    - code_execution  # и выполнение кода
+    - browser         # тяжёлая браузерная автоматизация
+    - computer_use
+    - delegation      # включим на этапе офиса
+    - kanban          # включим на этапе офиса
+    - image_gen
+    - video
+    - video_gen
+    - vision
+    - x_search
+
+# Доступ только владельцу. ID своего Telegram-аккаунта узнать у @userinfobot.
+# Реальное значение задаётся мастером gateway setup / в .env
+# (TELEGRAM_ALLOWED_USERS). Здесь — как напоминание о принципе "по умолчанию deny".
