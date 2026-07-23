@@ -3,31 +3,28 @@
 # Куда это кладётся на VPS:
 #   ~/.hermes/profiles/secretary/config.yaml
 #
-# ВАЖНО:
-#  - Для provider: custom Hermes требует api_key ПРЯМО в этом файле — это
-#    единственное место, откуда он его читает для кастомных эндпоинтов.
-#    OPENAI_API_KEY в .env сюда НЕ подхватывается (тот env-var — только для
-#    встроенного провайдера openai-api). Да, это означает, что этот файл
-#    содержит секрет и в git попадать не должен как есть с реальным ключом —
-#    храни файл с реальным ключом только на VPS, не коммить.
-#  - Токен Telegram-бота — отдельно, в .env (см. profiles/.env.example).
-#  - Значения в <угловых скобках> заменить на свои. Проще всего задать их
-#    мастером `hermes -p secretary model` (он сам пропишет provider/base_url/
-#    api_key сюда), а characterи/тулсеты в этом файле держать вручную.
+# ПРОВАЙДЕР: OpenRouter (перешли на него после того, как ру-реселлеры оказались
+# нерабочими — см. docs/phase-1-runbook.md, раздел "Провайдер"). OpenRouter —
+# первоклассный провайдер Hermes: ключ уходит в .env как OPENROUTER_API_KEY,
+# а сюда пишется только выбор модели. Проще всего настроить мастером
+# `hermes -p secretary model` → OpenRouter → вставить ключ → выбрать модель.
+# Мастер сам корректно пропишет всё в нужные места (не редактируй руками —
+# на ручных правках YAML мы уже обжигались).
+#
+# ВАЖНО про геоблок: OpenRouter блокирует российские IP (403). Сервер должен
+# быть НЕ в РФ (у нас — Contabo EU). См. runbook.
 
 model:
-  provider: custom                 # CheapVibeCode — OpenAI-совместимый эндпоинт
-  base_url: <CHEAPVIBECODE_BASE_URL>   # напр. https://cheapvibecode.ru/v1
-  default: <MODEL_ID>              # проверенная модель, напр. gpt-5.6-terra
-  api_key: <CHEAPVIBECODE_API_KEY>  # ОБЯЗАТЕЛЬНО здесь, не в .env — см. пояснение выше
-  # context_length: 200000         # раскомментировать, если авто-детект занижает
+  provider: openrouter
+  default: deepseek/deepseek-v4-flash   # дёшево ($0.10/$0.20 за 1M) + рабочий tool-calling; для лёгкого секретаря идеально
+  # ключ — в .env: OPENROUTER_API_KEY=sk-or-...
+  # запасная модель, если deepseek начнёт чудить: openai/gpt-5.4-mini (дороже, но предсказуемее в tool-calling)
 
 agent:
   # Секретарь — лёгкий. Выключаем всё тяжёлое и опасное; оставляем только
   # то, что реально нужно для времени/напоминаний/сводок.
-  # Оставлены (не в списке ниже): memory, cronjob, session_search, web,
-  #   skills, todo.
-  # Выключены:
+  # На практике урезали через `hermes -p secretary tools` до: memory, todo, cronjob.
+  # disabled_toolsets ниже — дублирующая страховка на случай сброса per-platform.
   disabled_toolsets:
     - terminal        # секретарю не нужен шелл
     - code_execution  # и выполнение кода
