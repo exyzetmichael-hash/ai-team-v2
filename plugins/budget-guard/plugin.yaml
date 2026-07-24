@@ -1,0 +1,10 @@
+name: budget-guard
+version: 1.0.0
+description: "Мягкий бюджет-лимит: раз в 15 минут проверяет остаток на OpenRouter (GET /api/v1/credits) и, если он ниже порога, вписывает предупреждение в контекст хода. Никогда не блокирует и не отказывает — только предупреждает (см. требование 3.8 брифа: мягкий лимит, не жёсткий обрыв)."
+author: ai-team-v2
+kind: standalone
+platforms:
+  - linux
+  - macos
+hooks:
+  - pre_llm_call
