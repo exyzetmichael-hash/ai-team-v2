@@ -61,19 +61,21 @@ hermes -p secretary
 
 Файл `MORNING.md` уже занесён в профиль (шаг 1) — это чеклист, который секретарь выполняет каждое утро сам, без твоего участия (по образцу принятого в Hermes паттерна "BOOT.md/MORNING.md").
 
-Заведи cron-задачу:
+Заведи cron-задачу. **Расписание — cron-выражением** (`минута час * * *`), а не словами: Hermes понимает `"30m"`, `"every 2h"` и cron-выражения, но **не** формы вида «every 1d at 08:00». Для «каждый день в 08:00» это `"0 8 * * *"`:
 ```bash
-hermes -p secretary cron create "every 1d at 08:00" \
+hermes -p secretary cron create "0 8 * * *" \
   "Прочитай файл ~/.hermes/profiles/secretary/MORNING.md и строго следуй инструкциям в нём. Если по итогу нужно ответить ровно [SILENT] — ответь именно так, без пояснений и лишних слов." \
   --deliver telegram \
   --name "Утренняя сводка"
 ```
-Поправь `08:00` на удобное тебе время.
+Поправь `0 8 * * *` на удобное время (например 07:30 → `"30 7 * * *"`). Время считается в таймзоне, настроенной в Hermes, — если она не та, задай её в конфиге заранее.
 
-**Проверка доставки (важно — это первый раз, когда мы используем `--deliver telegram` для cron, могут быть нюансы):**
+> ⚠️ **Cron-тикер живёт внутри gateway.** Задача сработает по расписанию, только если у секретаря запущен gateway (`hermes -p secretary gateway status` — если не running, `hermes -p secretary gateway start`). Без gateway `cron list` покажет `next_run_at`, но задача не выстрелит.
+
+**Проверка доставки (важно — это первый раз, когда мы используем `--deliver telegram` для cron, могут быть нюансы).** Команды `cron trigger` нет — принудительный прогон это `cron run <job_id>` (не по имени!), поэтому сперва узнай id через `cron list`:
 ```bash
-hermes -p secretary cron list
-hermes -p secretary cron trigger "Утренняя сводка"   # запустить прямо сейчас, не дожидаясь расписания
+hermes -p secretary cron list          # найди id задачи "Утренняя сводка" в выводе
+hermes -p secretary cron run <job_id>  # прогнать на ближайшем тике (gateway должен быть запущен)
 ```
 Смотри в Telegram — должно прийти (или, если календарь/дедлайны пустые — придёт `[SILENT]`, точнее ничего не придёт, это нормально по дизайну MORNING.md).
 
@@ -81,7 +83,7 @@ hermes -p secretary cron trigger "Утренняя сводка"   # запус�
 ```bash
 grep TELEGRAM_HOME_CHANNEL ~/.hermes/profiles/secretary/.env
 ```
-Если пусто — Hermes может ещё не знать «домашний канал» для доставки. Пришли мне, что покажет `hermes -p secretary cron list` и лог `tail -50 ~/.hermes/profiles/secretary/logs/agent.log` после триггера — доберём точную причину по факту, не гадая.
+Если пусто — Hermes может ещё не знать «домашний канал» для доставки. Пришли мне, что покажет `hermes -p secretary cron list` и лог `tail -50 ~/.hermes/profiles/secretary/logs/agent.log` после прогона — доберём точную причину по факту, не гадая. (Первым делом проверь `hermes -p secretary gateway status` — самая частая причина «тишины» это незапущенный gateway, а не сам cron.)
 
 ---
 
