@@ -71,6 +71,14 @@ hermes -p brain model
 ```
 OpenRouter → тот же ключ → модель `deepseek/deepseek-v4-flash` (или другую, см. комментарий в config.yaml).
 
+**Бюджет-хук — тот же плагин, что у секретаря.** `budget-guard` (фаза 2) привязан к профилю, а не глобален — `brain` тоже тратит OpenRouter-токены, ему нужна своя копия:
+```bash
+mkdir -p ~/.hermes/profiles/brain/plugins
+cp -r ~/ai-team-v2/plugins/budget-guard ~/.hermes/profiles/brain/plugins/
+hermes -p brain plugins enable budget-guard
+```
+Порог можно оставить общим ($3, дефолт) или задать отдельно через `.env` профиля brain — см. `docs/phase-2-runbook.md`, раздел 4.
+
 **Проверь filesystem MCP** — при первом запуске Hermes подтянет `@modelcontextprotocol/server-filesystem` через `npx` (нужен Node.js, он уже стоит из установки Hermes):
 ```bash
 hermes -p brain
@@ -119,3 +127,4 @@ hermes -p brain
 - [ ] `brain` читает vault и отвечает по существу, не выдумывая.
 - [ ] Запись в vault идёт строго через PR — прямых пушей в main нет технически (branch protection) и по факту.
 - [ ] SSH-ключ и GitHub-токен brain'а не пересекаются с ключом кодового репозитория `ai-team-v2`.
+- [ ] `budget-guard` стоит и у brain, не только у секретаря — расход токенов на оба профиля виден/предупреждается одинаково.

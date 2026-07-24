@@ -72,10 +72,10 @@ cp -r ~/ai-team-v2/plugins/office-gate ~/.hermes/profiles/brain/plugins/
 hermes -p secretary plugins enable office-gate
 hermes -p brain plugins enable office-gate
 ```
-Перезапусти gateway обоих профилей, чтобы плагин подхватился:
+Перезапусти gateway обоих профилей, чтобы плагин подхватился — используй сам `hermes`, а не руками `systemctl`: Hermes по умолчанию ставит **user-scope** systemd-юнит (`hermes-gateway-<профиль>`), а не системный, так что `sudo systemctl restart` может целить не в тот scope или не найти юнит вовсе. `gateway restart` сам разбирается, user это или system (флаг `--system`, если ты явно ставил как системный сервис):
 ```bash
-sudo systemctl restart hermes-gateway-secretary
-sudo systemctl restart hermes-gateway-brain   # если уже стоит сервисом
+hermes -p secretary gateway restart
+hermes -p brain gateway restart   # если у brain уже настроен gateway-сервис
 ```
 
 ### 2.4 План калибровки — вот тут начинается реальная работа

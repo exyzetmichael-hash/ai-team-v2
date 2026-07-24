@@ -70,8 +70,16 @@ uv pip install -e ".[web,pty]"   # или ".[all]", если ставили та
 
 ## 3. Автозапуск сервисом (переживает logout/reboot)
 
+Сначала узнай реальный путь до `hermes` — **не полагайся на `PATH` внутри unit-файла**,
+systemd запускает сервисы с минимальным `PATH`, который обычно не включает
+`~/.local/bin`/pipx/uv-каталоги, где реально лежит `hermes`, даже если в интерактивном
+шелле команда находится:
 ```bash
-sudo tee /etc/systemd/system/hermes-dashboard.service <<'EOF'
+which hermes
+```
+
+```bash
+sudo tee /etc/systemd/system/hermes-dashboard.service <<EOF
 [Unit]
 Description=Hermes web dashboard
 After=network.target
@@ -80,7 +88,7 @@ After=network.target
 Type=simple
 User=<твой linux-юзер>
 EnvironmentFile=/home/<твой linux-юзер>/.hermes/.env
-ExecStart=/usr/bin/env hermes dashboard --host <tailscale-ip> --port 9119 --no-open
+ExecStart=$(which hermes) dashboard --host <tailscale-ip> --port 9119 --no-open
 Restart=on-failure
 RestartSec=5
 
@@ -93,7 +101,9 @@ sudo systemctl enable --now hermes-dashboard
 sudo systemctl status hermes-dashboard
 ```
 (Подставь реального linux-юзера и tailscale-IP из шага 2 — жёстко зашивать `0.0.0.0` не
-надо, это открыло бы порт на все интерфейсы, включая публичный, если фаервол не прикрывает.)
+надо, это открыло бы порт на все интерфейсы, включая публичный, если фаервол не прикрывает.
+Если `sudo tee` выполняешь не из-под того же пользователя, чей `which hermes` тебе нужен —
+подставь путь руками вместо `$(which hermes)`.)
 
 ## 4. Проверка
 

@@ -24,8 +24,8 @@ agent:
     - code_execution   # выполнение произвольного кода не нужно для работы с заметками
     - browser
     - computer_use
-    - delegation       # включим на этапе офиса
-    - kanban           # включим на этапе офиса
+    - delegation       # fork/join сабагенты внутри своего же контекста — не нужно для работы с vault, не путать с Kanban (см. ниже)
+    - kanban           # включим на этапе офиса (см. docs/phase-5-runbook.md) — это отдельная фича, реальный механизм передачи задач между профилями
     - image_gen
     - video
     - video_gen

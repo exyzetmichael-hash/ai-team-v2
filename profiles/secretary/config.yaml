@@ -30,8 +30,8 @@ agent:
     - code_execution  # и выполнение кода
     - browser         # тяжёлая браузерная автоматизация
     - computer_use
-    - delegation      # включим на этапе офиса
-    - kanban          # включим на этапе офиса
+    - delegation      # fork/join сабагенты внутри своего же контекста — секретарю не нужно, не путать с Kanban (офисная передача задач другому профилю — отдельная фича, включаем её в фазе 5)
+    - kanban          # включим на этапе офиса (см. docs/phase-5-runbook.md)
     - image_gen
     - video
     - video_gen
