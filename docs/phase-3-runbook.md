@@ -116,8 +116,9 @@ echo "graphify-out/" >> ~/vault/.gitignore
 cd ~/vault && git add .gitignore && git commit -m "Ignore generated Graphify output" && git push
 ```
 
-**4.3 Первая сборка графа.** Индексация markdown (в отличие от кода) идёт через LLM — переиспользуем тот же OpenRouter-ключ, что и у brain, через OpenAI-совместимый режим Graphify:
+**4.3 Первая сборка графа.** Индексация markdown (в отличие от кода) идёт через LLM — переиспользуем тот же OpenRouter-ключ, что и у brain, через OpenAI-совместимый режим Graphify. Это может занять несколько минут (десятки чанков по очереди) — **запускай в `tmux`**, чтобы случайный обрыв SSH не убил прогресс на середине:
 ```bash
+tmux new -s graphify
 cd ~/vault
 OPENAI_API_KEY=<твой OPENROUTER_API_KEY> \
 OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
@@ -125,7 +126,9 @@ OPENAI_MODEL=deepseek/deepseek-v4-flash \
 GRAPHIFY_MAX_OUTPUT_TOKENS=16384 \
   graphify extract . --backend openai --token-budget 4000
 ```
-⚠️ `GRAPHIFY_MAX_OUTPUT_TOKENS=16384` и `--token-budget 4000` — обязательны с `deepseek-v4-flash`: без них модель обрывает JSON на середине (сам README Graphify называет `deepseek-v4-flash` в числе моделей, упирающихся в дефолтный потолок вывода), и Graphify уходит в рекурсивное дробление чанков пополам, которое может не сходиться заметное время. Если и с этими флагами не заходит — попробуй `--token-budget 2000`, или временно смени `OPENAI_MODEL` на модель понадёжнее в структурированном JSON (`deepseek/deepseek-v4-pro`, `openai/gpt-5.4-mini`) только для этого разового прогона — дороже, но одноразово.
+Если связь оборвалась — заходи заново по SSH и `tmux attach -t graphify`, сессия продолжает работать на сервере независимо от твоего подключения.
+
+⚠️ `GRAPHIFY_MAX_OUTPUT_TOKENS=16384` и `--token-budget 4000` — обязательны с `deepseek-v4-flash`: без них модель обрывает JSON на середине (сам README Graphify называет `deepseek-v4-flash` в числе моделей, упирающихся в дефолтный потолок вывода). С этими флагами всё равно возможны единичные упавшие чанки ("Expecting value..." — модель разово вернула что-то невалидное) — это не фатально, Graphify помечает такие файлы как необработанные и **повторный запуск той же команды дообработает только их**, не платит заново за уже готовое (сам инструмент об этом пишет: "a re-run will retry them"). Если падает систематически — попробуй `--token-budget 2000`, или временно смени `OPENAI_MODEL` на модель понадёжнее в структурированном JSON (`deepseek/deepseek-v4-pro`, `openai/gpt-5.4-mini`) только для этого разового прогона.
 
 Это стоит реальных, хоть и небольших денег (индексация — не бесплатная операция, в отличие от обычного чтения файлов). Появится `~/vault/graphify-out/graph.json` — это то, что читает `mcp_servers.graphify` в конфиге brain.
 
