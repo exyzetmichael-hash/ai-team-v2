@@ -44,18 +44,29 @@ terminal:
   # подставь свой (см. docs/phase-3-runbook.md, шаг 1).
   cwd: /home/michael/vault
 
-# --- MCP: filesystem-доступ к vault ---
-# Официальный filesystem MCP-сервер (@modelcontextprotocol/server-filesystem),
-# формат подтверждён по актуальным исходникам Hermes (cli-config.yaml.example).
-# Даёт agent'у read/write конкретно внутри указанной директории — не всей ФС.
+# --- MCP: два сервера, разное назначение, оба нужны ---
 mcp_servers:
+  # Официальный filesystem MCP-сервер (@modelcontextprotocol/server-filesystem),
+  # формат подтверждён по актуальным исходникам Hermes (cli-config.yaml.example).
+  # Даёт agent'у read/write конкретно внутри указанной директории — не всей ФС.
+  # Это по-прежнему основной путь чтения сырых заметок и (через terminal +
+  # скилл vault-pr-write) путь записи — Graphify ниже НЕ пишет и не заменяет это.
   filesystem:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/michael/vault"]
 
-  # Graphify — опциональный апгрейд под экономию токенов на большом vault
-  # (см. docs/phase-3-runbook.md, раздел "Graphify"). НЕ проверен вживую —
-  # раскомментируй и настрой только после прочтения предупреждений в runbook.
-  # graphify:
-  #   command: uv
-  #   args: ["tool", "run", "--from", "graphifyy", "python", "-m", "graphify.serve", "--path", "/home/michael/vault"]
+  # Graphify — граф знаний поверх vault, дешёвые структурные запросы
+  # (query_graph/get_node/get_neighbors/shortest_path) вместо перечитывания
+  # сырых файлов на каждый вопрос. Только ЧТЕНИЕ графа — не пишет в vault,
+  # не нужен LLM-ключ на этапе serve (он нужен только при построении графа,
+  # см. docs/phase-3-runbook.md, шаг "Graphify"). У Graphify нет подкоманды
+  # `serve` — единственный подтверждённый по README способ запуска сервера:
+  # `python -m graphify.serve <путь-к-graph.json>`, и раз graphify ставится
+  # изолированно через `uv tool install graphifyy`, вызывать нужно через
+  # `uv tool run --from graphifyy`, иначе голый python пакет не найдёт.
+  # graph.json собирается один раз командой `graphify extract` (шаг в runbook)
+  # и лежит внутри клона vault, вне git (см. .gitignore) — путь ниже подставь
+  # под свой реальный путь клона (тот же, что у filesystem/terminal.cwd выше).
+  graphify:
+    command: uv
+    args: ["tool", "run", "--from", "graphifyy", "python", "-m", "graphify.serve", "/home/michael/vault/graphify-out/graph.json"]
