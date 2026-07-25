@@ -10,11 +10,19 @@
 
 ```bash
 cd ~/ai-team-v2 && git pull
-cp profiles/secretary/SOUL.md    ~/.hermes/profiles/secretary/SOUL.md
-cp profiles/secretary/MORNING.md ~/.hermes/profiles/secretary/MORNING.md
+cp profiles/secretary/SOUL.md      ~/.hermes/profiles/secretary/SOUL.md
+cp profiles/secretary/MORNING.md   ~/.hermes/profiles/secretary/MORNING.md
+cp profiles/secretary/config.yaml  ~/.hermes/profiles/secretary/config.yaml
 ```
 
-Проверь, что характер подхватился (кратко):
+⚠️ **`config.yaml` теперь тоже обязателен к копированию** (в фазе 1 его хватало один раз, дальше не трогали). Причина: у bundled-скилла Google Workspace в этой версии Hermes нет отдельного тула для календаря — все операции (список/создание событий, сам OAuth-setup) идут через shell-вызов `python google_api.py ...`. В фазе 1 `terminal` у секретаря был сознательно выключен («шелл не нужен») — без него календарь физически не заработает, поэтому в конфиге `terminal` **включён обратно**, а взамен добавлено `approvals.mode: manual` — это подтверждение только на по-настоящему опасные команды (`rm -rf` и т.п. из встроенного списка Hermes), не на каждый вызов календаря. Если тебя не устраивает такой компромисс (у секретаря теперь технически есть шелл, не только «доступ к календарю») — скажи, обсудим другой путь до того, как копировать конфиг.
+
+Если gateway секретаря уже был запущен раньше — перезапусти, чтобы новый `disabled_toolsets`/`approvals` подхватились:
+```bash
+hermes -p secretary gateway restart
+```
+
+Проверь, что характер и новые тулы подхватились (кратко):
 ```bash
 hermes -p secretary
 ```
@@ -114,6 +122,7 @@ curl -s https://openrouter.ai/api/v1/credits -H "Authorization: Bearer $(grep OP
 - [ ] Секретарь читает и создаёт события в Google Calendar (с подтверждением).
 - [ ] Утренняя сводка приходит в Telegram сама, или молчит в пустой день.
 - [ ] При низком балансе OpenRouter секретарь может упомянуть это — не отказывает, не молчит намертво.
+- [ ] Секретарь не использует shell ни для чего, кроме календаря — если заметишь, что он полез в файлы/команды не по теме, пиши мне, это повод ужесточить SOUL или вернуть `terminal` в `disabled_toolsets` и поискать другой путь для календаря.
 
 ## Если что-то не так
 `hermes -p secretary doctor` → проверить логи (`~/.hermes/profiles/secretary/logs/`) → прислать мне конкретную ошибку, не пересказ. Как и в фазе 1 — тут дьявол в деталях, которые я не вижу без сервера.
