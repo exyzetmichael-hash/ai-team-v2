@@ -104,10 +104,11 @@ hermes -p brain
 
 Все команды и флаги ниже сверены по актуальному README проекта (Graphify-Labs/graphify), не угаданы — но живьём я это не гонял (нет своего сервера), так что первый прогон — твоя проверка.
 
-**4.1 Установка** (на сервере, тот же принцип, что был с `uv` раньше — Ubuntu 24.04 блокирует голый `pip install`):
+**4.1 Установка** (на сервере, тот же принцип, что был с `uv` раньше — Ubuntu 24.04 блокирует голый `pip install`). Backend-провайдеры у Graphify — опциональные extras, ставь сразу с `[openai]`, иначе `--backend openai` упадёт с "the 'openai' package is required":
 ```bash
-uv tool install graphifyy
+uv tool install "graphifyy[openai]"
 ```
+Если уже стоит без extra — `uv tool install "graphifyy[openai]" --force`.
 
 **4.2 Не тащить сгенерированный граф в git.** Он пересобирается заново в каждом клоне (у тебя на компе он вообще не нужен — Graphify нужен только brain'у на сервере). В `~/vault/.gitignore`:
 ```bash
