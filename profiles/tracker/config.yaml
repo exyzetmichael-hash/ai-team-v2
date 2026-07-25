@@ -1,0 +1,34 @@
+# Конфиг профиля "tracker" (проджект-трекер) для Hermes.
+#
+# Куда это кладётся на VPS:
+#   ~/.hermes/profiles/tracker/config.yaml
+#
+# Провайдер — как у всех: OpenRouter, ключ в .env как OPENROUTER_API_KEY.
+# Настраивай мастером `hermes -p tracker model`, не редактируй provider/api_key руками.
+
+timezone: Europe/Moscow
+
+model:
+  provider: openrouter
+  default: deepseek/deepseek-v4-flash
+  # Роль в основном про память и связность, а не про сложное рассуждение —
+  # дешёвой модели должно хватать надолго.
+
+agent:
+  # Лёгкий агент: чистая память + переписка. Ни кода, ни файлов, ни терминала.
+  # Это сознательно: трекер знает состояние проектов ТОЛЬКО со слов Михаила
+  # (см. раздел "Откуда ты берёшь информацию" в SOUL.md). Доступ к vault — у
+  # brain; когда доделаем офис (фаза 5), трекер сможет спросить у него через
+  # Kanban, а пока источник правды — сам Михаил.
+  disabled_toolsets:
+    - terminal
+    - code_execution
+    - browser          # тяжёлая браузерная автоматизация; web_search при этом ОСТАЁТСЯ доступен
+    - computer_use
+    - delegation
+    - kanban           # включим на этапе офиса (docs/phase-5-runbook.md) — тогда же трекер получит связь с brain
+    - image_gen
+    - video
+    - video_gen
+    - vision
+    - x_search

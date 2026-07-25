@@ -1,0 +1,35 @@
+# Конфиг профиля "legal" (юрист) для Hermes.
+#
+# Куда это кладётся на VPS:
+#   ~/.hermes/profiles/legal/config.yaml
+#
+# Провайдер — как у всех: OpenRouter, ключ в .env как OPENROUTER_API_KEY.
+# Настраивай мастером `hermes -p legal model`, не редактируй provider/api_key руками.
+
+timezone: Europe/Moscow
+
+model:
+  provider: openrouter
+  default: deepseek/deepseek-v4-flash
+  # ⚠️ Из всех профилей здесь цена ошибки самая высокая: выдуманная ссылка на
+  # статью закона выглядит убедительно и на неё сошлются. Если заметишь, что
+  # модель фантазирует номера статей или путается в нормах — апгрейди НЕ
+  # раздумывая: openai/gpt-5.4-mini или deepseek/deepseek-v4-pro. Экономия на
+  # этой роли — ложная.
+
+agent:
+  # Веб-поиск (toolset `web`) НЕ отключён и критичен: законы, ставки и лимиты
+  # меняются, а память модели устаревает — SOUL.md прямо требует проверять
+  # актуальные цифры поиском, а не называть по памяти.
+  disabled_toolsets:
+    - terminal
+    - code_execution
+    - browser          # тяжёлая браузерная автоматизация; web_search при этом ОСТАЁТСЯ доступен
+    - computer_use
+    - delegation
+    - kanban           # включим на этапе офиса (docs/phase-5-runbook.md)
+    - image_gen
+    - video
+    - video_gen
+    - vision           # если понадобится присылать фото документов — убрать эту строку
+    - x_search
