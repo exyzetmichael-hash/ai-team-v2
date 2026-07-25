@@ -1,0 +1,119 @@
+# Фаза 2 — Runbook: секретарь как ежедневный инструмент
+
+**Цель:** живой секретарь (готов после фазы 1) обрастает Google Calendar, утренней сводкой и мягким контролем бюджета. По завершении — критерии из `docs/roadmap.md`: сводка сама приходит по утрам (или молчит), дедлайны/события в календаре ставятся голосом, виден накопленный расход.
+
+Как и раньше: файлы — от меня, в репозитории; выполнение на сервере — твоё. Все команды ниже подставляй с `-p secretary`, если явно не указано иное.
+
+---
+
+## 1. Обновить файлы профиля из репо
+
+```bash
+cd ~/ai-team-v2 && git pull
+cp profiles/secretary/SOUL.md    ~/.hermes/profiles/secretary/SOUL.md
+cp profiles/secretary/MORNING.md ~/.hermes/profiles/secretary/MORNING.md
+```
+
+Проверь, что характер подхватился (кратко):
+```bash
+hermes -p secretary
+```
+```
+кто ты и чем занимаешься
+```
+Должен упомянуть календарь и бюджет (это новое с прошлого раза).
+
+---
+
+## 2. Google Calendar — через встроенный bundled-скилл
+
+У Hermes уже есть скилл `productivity/google-workspace` (MIT, ставится по умолчанию) — Calendar, Gmail, Drive, Sheets, Docs через OAuth. Настройка полностью диалоговая — веди её через сам чат с секретарём, не руками.
+
+**Шаг 2.1 — создать OAuth-клиент в Google Cloud (один раз, ~5 минут, это делаешь ты в браузере):**
+1. https://console.cloud.google.com/projectselector2/home/dashboard — создать/выбрать проект.
+2. Включить API: **Google Calendar API** (и Gmail/Drive/Sheets/Docs/People, если хочешь остальное — но нам для секретаря нужен минимум **Calendar**).
+   https://console.cloud.google.com/apis/library
+3. Создать OAuth-клиент: https://console.cloud.google.com/apis/credentials → Create Credentials → OAuth 2.0 Client ID → **Application type: Desktop app**.
+4. Если приложение в режиме Testing — добавь свой аккаунт в тестовые пользователи:
+   https://console.cloud.google.com/auth/audience
+5. Скачай JSON-файл клиента, запомни путь.
+
+**Шаг 2.2 — доверь остальное секретарю.** Зайди в чат и скажи:
+```bash
+hermes -p secretary
+```
+```
+Настрой доступ к моему Google Calendar. Файл с OAuth-клиентом лежит здесь: /home/michael/Downloads/client_secret_....json
+```
+Секретарь сам проведёт тебя через `--services calendar` (узкий scope, без лишних разрешений), пришлёт ссылку авторизации, попросит вставить код/URL после того, как ты залогинишься в браузере. Это **специально сделано диалоговым**, чтобы работать даже через Telegram, не только CLI.
+
+**Проверка:**
+```
+Что у меня в календаре на сегодня?
+```
+Если календарь пуст — так и скажет; если ошибка `NOT_AUTHENTICATED` — значит OAuth не завершился, повтори шаг 2.2.
+
+⚠️ Скилл сам просит подтверждение перед созданием/удалением события — это встроенное поведение, не наша настройка, трогать не нужно.
+
+---
+
+## 3. Утренняя сводка — cron-задача
+
+Файл `MORNING.md` уже занесён в профиль (шаг 1) — это чеклист, который секретарь выполняет каждое утро сам, без твоего участия (по образцу принятого в Hermes паттерна "BOOT.md/MORNING.md").
+
+Заведи cron-задачу. **Расписание — cron-выражением** (`минута час * * *`), а не словами: Hermes понимает `"30m"`, `"every 2h"` и cron-выражения, но **не** формы вида «every 1d at 08:00». Для «каждый день в 08:00» это `"0 8 * * *"`:
+```bash
+hermes -p secretary cron create "0 8 * * *" \
+  "Прочитай файл ~/.hermes/profiles/secretary/MORNING.md и строго следуй инструкциям в нём. Если по итогу нужно ответить ровно [SILENT] — ответь именно так, без пояснений и лишних слов." \
+  --deliver telegram \
+  --name "Утренняя сводка"
+```
+Поправь `0 8 * * *` на удобное время (например 07:30 → `"30 7 * * *"`). Время считается в таймзоне, настроенной в Hermes, — если она не та, задай её в конфиге заранее.
+
+> ⚠️ **Cron-тикер живёт внутри gateway.** Задача сработает по расписанию, только если у секретаря запущен gateway (`hermes -p secretary gateway status` — если не running, `hermes -p secretary gateway start`). Без gateway `cron list` покажет `next_run_at`, но задача не выстрелит.
+
+**Проверка доставки (важно — это первый раз, когда мы используем `--deliver telegram` для cron, могут быть нюансы).** Команды `cron trigger` нет — принудительный прогон это `cron run <job_id>` (не по имени!), поэтому сперва узнай id через `cron list`:
+```bash
+hermes -p secretary cron list          # найди id задачи "Утренняя сводка" в выводе
+hermes -p secretary cron run <job_id>  # прогнать на ближайшем тике (gateway должен быть запущен)
+```
+Смотри в Telegram — должно прийти (или, если календарь/дедлайны пустые — придёт `[SILENT]`, точнее ничего не придёт, это нормально по дизайну MORNING.md).
+
+**Если ничего не пришло вообще (ни сводки, ни признаков работы):** проверь, что доставка знает, куда слать:
+```bash
+grep TELEGRAM_HOME_CHANNEL ~/.hermes/profiles/secretary/.env
+```
+Если пусто — Hermes может ещё не знать «домашний канал» для доставки. Пришли мне, что покажет `hermes -p secretary cron list` и лог `tail -50 ~/.hermes/profiles/secretary/logs/agent.log` после прогона — доберём точную причину по факту, не гадая. (Первым делом проверь `hermes -p secretary gateway status` — самая частая причина «тишины» это незапущенный gateway, а не сам cron.)
+
+---
+
+## 4. Мягкий бюджет-лимит
+
+Плагин уже готов в репо (`plugins/budget-guard/`). Он **не блокирует ничего** — раз в 15 минут проверяет остаток на OpenRouter (`GET /api/v1/credits`) и, если он ниже $3 (настраивается), тихо вписывает предупреждение в контекст хода — секретарь сам решит, упомянуть ли тебе.
+
+```bash
+mkdir -p ~/.hermes/profiles/secretary/plugins
+cp -r ~/ai-team-v2/plugins/budget-guard ~/.hermes/profiles/secretary/plugins/
+hermes -p secretary plugins enable budget-guard
+```
+
+Порог меняется через `.env`:
+```bash
+echo 'HERMES_BUDGET_WARN_USD=3.0' >> ~/.hermes/profiles/secretary/.env
+```
+
+**⚠️ Этот плагин я не проверял вживую** (не с чего было — своего OpenRouter-ключа с балансом у меня нет). Конкретно неопределённость одна: точная форма JSON-ответа `GET /api/v1/credits` (плагин пробует и `{"data":{"total_credits":...}}`, и плоскую форму — но это не подтверждено на практике). Проверь так:
+```bash
+curl -s https://openrouter.ai/api/v1/credits -H "Authorization: Bearer $(grep OPENROUTER_API_KEY ~/.hermes/profiles/secretary/.env | cut -d= -f2)"
+```
+Пришли мне сырой JSON, если он **не содержит** `total_credits`/`total_usage` — поправлю парсинг под реальный формат за один шаг.
+
+---
+
+## Критерии готовности фазы 2
+- [ ] Секретарь читает и создаёт события в Google Calendar (с подтверждением).
+- [ ] Утренняя сводка приходит в Telegram сама, или молчит в пустой день.
+- [ ] При низком балансе OpenRouter секретарь может упомянуть это — не отказывает, не молчит намертво.
+
+## Если что-то не так
+`hermes -p secretary doctor` → проверить логи (`~/.hermes/profiles/secretary/logs/`) → прислать мне конкретную ошибку, не пересказ. Как и в фазе 1 — тут дьявол в деталях, которые я не вижу без сервера.

@@ -1,6 +1,33 @@
 # Фаза 1 — Runbook: поднять секретаря на VPS
 
-**Цель фазы:** один живой агент-секретарь на CheapVibeCode. Дать ему ту задачу «поставь дедлайн», что падала за 90 с на старом ai-team. Замерить три вещи: **работает / сколько стоит / виден ли прогресс.**
+> ## ✅ ИТОГ ФАЗЫ 1 (2026-07-23): секретарь работает — CLI + Telegram
+> Реальный путь оказался длиннее плана. Ключевые выводы, чтобы не повторять:
+>
+> 1. **CheapVibeCode и другие .ru-реселлеры — мимо.** У CheapVibeCode
+>    ломается стриминг с инструментами (0 байт → таймаут 180с), а Hermes
+>    стриминг штатно не выключить. Второй реселлер стабильно отдавал ошибки.
+>    Реселлеры — это рулетка.
+> 2. **Прямой OpenRouter/зарубежные провайдеры геоблокают российский IP**
+>    (403 "Access denied by security policy"). Проверяется мгновенно голым
+>    curl'ом: `curl -sw "%{http_code}" https://openrouter.ai/api/v1/models`.
+> 3. **Решение — VPS вне РФ.** Взяли Contabo EU (12 ГБ / 6 vCPU / 200 ГБ,
+>    €7.50/мес, Ubuntu 24.04). Геоблока нет, OpenRouter работает напрямую,
+>    стриминг рабочий. Российский AdminVPS НЕ удаляем — пригодится как
+>    ру-выход под WB/Ozon Seller API (см. вопрос маркетплейсера).
+> 4. **Провайдер — OpenRouter**, модель — `deepseek/deepseek-v4-flash`
+>    (дёшево + рабочий tool-calling). Расход на тесте: ~$0.01 за 9 запросов.
+> 5. **Telegram-«зависание» — призрак.** После подключения long-polling
+>    просто молча ждёт (никакого баннера "Connected"). Две строки
+>    "Discovering… / Connecting attempt 1/8…" и тишина = РАБОТАЕТ. Проверка:
+>    при запущенном `gateway run` написать боту с телефона — появятся новые
+>    строки в терминале / придёт ответ. Не гоняйся за этим как за багом.
+>
+> Разделы ниже — исходный план (был написан под CheapVibeCode). Шаги 1, 3-6
+> актуальны; шаг 2 (провайдер) читай как **OpenRouter**, а не Custom endpoint.
+
+---
+
+**Цель фазы:** один живой агент-секретарь. Дать ему ту задачу «поставь дедлайн», что падала за 90 с на старом ai-team. Замерить три вещи: **работает / сколько стоит / виден ли прогресс.** — ✅ выполнено.
 
 Это go/no-go для всего проекта. Не поднимаем офис на пятерых, пока один секретарь не докажет, что он реально удобен.
 
@@ -87,11 +114,13 @@ hermes profile create secretary
 cp profiles/secretary/SOUL.md    ~/.hermes/profiles/secretary/SOUL.md
 cp profiles/secretary/config.yaml ~/.hermes/profiles/secretary/config.yaml
 
-# секреты — из шаблона, ВПИСАТЬ реальные значения руками:
+# секреты (Telegram) — из шаблона, ВПИСАТЬ реальные значения руками:
 cp profiles/.env.example ~/.hermes/profiles/secretary/.env
-nano ~/.hermes/profiles/secretary/.env   # вписать ключ CheapVibeCode, токен бота, свой TG id
+nano ~/.hermes/profiles/secretary/.env   # вписать токен бота и свой TG id
 ```
-Затем в `~/.hermes/profiles/secretary/config.yaml` замени `<CHEAPVIBECODE_BASE_URL>` и `<MODEL_ID>` на свои.
+Затем в `~/.hermes/profiles/secretary/config.yaml` замени `<CHEAPVIBECODE_BASE_URL>`, `<MODEL_ID>` и `<CHEAPVIBECODE_API_KEY>` на свои.
+
+⚠️ **Ключ провайдера — прямо в `config.yaml` (`model.api_key`), не в `.env`.** Для `provider: custom` Hermes читает API-ключ только оттуда; `OPENAI_API_KEY` в `.env` подхватывается лишь встроенным провайдером `openai-api` и для CheapVibeCode не работает. Если пропустить это — получишь на первом запросе зависание на ~180с, а на ретрае `HTTP 401 Invalid API key` (проверено на практике). Проще всего не редактировать файл руками, а прогнать `hermes -p secretary model` — мастер сам корректно впишет `provider`/`base_url`/`api_key` в нужное место.
 
 Проверь, что секретарь отвечает и характер подхватился:
 ```bash

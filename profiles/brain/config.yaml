@@ -1,0 +1,56 @@
+# Конфиг профиля "brain" (второй мозг) для Hermes.
+#
+# Куда это кладётся на VPS:
+#   ~/.hermes/profiles/brain/config.yaml
+#
+# Провайдер — тот же принцип, что у секретаря: OpenRouter, ключ в .env как
+# OPENROUTER_API_KEY (НЕ здесь — см. profiles/.env.example). Настраивай
+# мастером `hermes -p brain model`, не редактируй provider/base_url/api_key
+# руками (на этом уже обжигались с профилем secretary).
+
+model:
+  provider: openrouter
+  default: deepseek/deepseek-v4-flash   # та же дешёвая модель, что у секретаря — старт.
+  # Если вывод по vault будет ощущаться поверхностным/путаным на большом vault —
+  # апгрейд первым делом сюда, например openai/gpt-5.4-mini или deepseek-v4-pro:
+  # второй мозг требует более аккуратного рассуждения о связях, чем секретарь.
+
+agent:
+  # brain — единственный агент с доступом к файловой системе/терминалу (см.
+  # требование 3.3 брифа: "Файловая система — только у агента второго мозга").
+  # terminal НЕ выключаем (нужен git), но ограничиваем рабочую директорию
+  # ниже, чтобы агент физически не мог зацепить ничего, кроме клона vault.
+  disabled_toolsets:
+    - code_execution   # выполнение произвольного кода не нужно для работы с заметками
+    - browser
+    - computer_use
+    - delegation       # fork/join сабагенты внутри своего же контекста — не нужно для работы с vault, не путать с Kanban (см. ниже)
+    - kanban           # включим на этапе офиса (см. docs/phase-5-runbook.md) — это отдельная фича, реальный механизм передачи задач между профилями
+    - image_gen
+    - video
+    - video_gen
+    - x_search
+    # vision оставлен включённым — vault может содержать картинки/скриншоты
+
+terminal:
+  backend: local
+  # Ограничиваем рабочую директорию клоном vault — терминал агента не должен
+  # уметь блуждать по остальной файловой системе сервера. Путь ниже — пример,
+  # подставь свой (см. docs/phase-3-runbook.md, шаг 1).
+  cwd: /home/michael/vault
+
+# --- MCP: filesystem-доступ к vault ---
+# Официальный filesystem MCP-сервер (@modelcontextprotocol/server-filesystem),
+# формат подтверждён по актуальным исходникам Hermes (cli-config.yaml.example).
+# Даёт agent'у read/write конкретно внутри указанной директории — не всей ФС.
+mcp_servers:
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/michael/vault"]
+
+  # Graphify — опциональный апгрейд под экономию токенов на большом vault
+  # (см. docs/phase-3-runbook.md, раздел "Graphify"). НЕ проверен вживую —
+  # раскомментируй и настрой только после прочтения предупреждений в runbook.
+  # graphify:
+  #   command: uv
+  #   args: ["tool", "run", "--from", "graphifyy", "python", "-m", "graphify.serve", "--path", "/home/michael/vault"]
