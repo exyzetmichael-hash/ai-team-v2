@@ -104,11 +104,17 @@ hermes -p brain
 
 Все команды и флаги ниже сверены по актуальному README проекта (Graphify-Labs/graphify), не угаданы — но живьём я это не гонял (нет своего сервера), так что первый прогон — твоя проверка.
 
-**4.1 Установка** (на сервере, тот же принцип, что был с `uv` раньше — Ubuntu 24.04 блокирует голый `pip install`). Backend-провайдеры у Graphify — опциональные extras, ставь сразу с `[openai]`, иначе `--backend openai` упадёт с "the 'openai' package is required":
+**4.1 Установка** (на сервере, тот же принцип, что был с `uv` раньше — Ubuntu 24.04 блокирует голый `pip install`). Backend-провайдеры и MCP-режим у Graphify — опциональные extras, ставь сразу с обоими: без `[openai]` упадёт `--backend openai` с "the 'openai' package is required", без `[mcp]` упадёт сам `python -m graphify.serve` с `ModuleNotFoundError: No module named 'mcp'` (то есть без него сервер, который должен читать brain, вообще не стартует):
 ```bash
-uv tool install "graphifyy[openai]"
+uv tool install "graphifyy[openai,mcp]"
 ```
-Если уже стоит без extra — `uv tool install "graphifyy[openai]" --force`.
+Если уже стоит без extras — `uv tool install "graphifyy[openai,mcp]" --force`.
+
+Проверь перед тем, как идти дальше — команда должна зависнуть в ожидании (это нормально для stdio-сервера), не выкинуть traceback:
+```bash
+uv tool run --from graphifyy python -m graphify.serve /home/michael/vault/graphify-out/graph.json
+```
+Тихо висит → жми `Ctrl+C`, всё в порядке, можно перезапускать brain.
 
 **4.2 Не тащить сгенерированный граф в git.** Он пересобирается заново в каждом клоне (у тебя на компе он вообще не нужен — Graphify нужен только brain'у на сервере). В `~/vault/.gitignore`:
 ```bash
