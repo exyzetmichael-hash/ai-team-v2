@@ -50,3 +50,17 @@ agent:
 # по-прежнему создаёт и закрывает карточки, просто не раздаёт их сам.
 kanban:
   dispatch_in_gateway: false
+
+# --- Opt-in в оркестраторский режим Kanban (фаза 5) ---
+# НЕОЧЕВИДНО, но обязательно: убрать `kanban` из disabled_toolsets НЕ достаточно.
+# Инструменты kanban_* появляются в сессии только если профиль явно перечислил
+# `kanban` вот в этом верхнеуровневом ключе `toolsets` — так устроена проверка
+# _profile_has_kanban_toolset() в tools/kanban_tools.py, и то же сказано в
+# документации Hermes: "available to orchestrator profiles that enable kanban
+# in their toolsets config". Без этой строки агент видит kanban в списке
+# тулсетов при старте, но вызвать kanban_create не может (поймано на живом
+# прогоне: секретарь не нашёл инструмент и полез обходить через терминал).
+# `hermes-cli` — дефолтный набор, его сохраняем.
+toolsets:
+  - hermes-cli
+  - kanban

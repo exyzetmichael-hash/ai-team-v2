@@ -231,6 +231,7 @@ LLM-запросы продолжают уходить с EU-сервера.
 | Graphify уходит в бесконечное дробление чанков | `deepseek-v4-flash` упирается в лимит вывода и обрывает JSON | `GRAPHIFY_MAX_OUTPUT_TOKENS=16384` + `--token-budget 4000` |
 | `python -m graphify.serve` не находит модуль | У Graphify **нет** подкоманды `serve`, и он ставится в изолированное окружение | `uv tool run --from graphifyy python -m graphify.serve <graph.json>` |
 | Gateway не рестартится: «linger is not enabled» | На headless-сервере user-level systemd-сервисы умирают без linger | `sudo loginctl enable-linger <user>` |
+| Тулсет `kanban` включён, но инструментов `kanban_*` в сессии нет | Убрать из `disabled_toolsets` недостаточно: `check_fn` требует, чтобы профиль явно перечислил `kanban` в верхнеуровневом ключе `toolsets` | Держать обе настройки: убрать из `disabled_toolsets` **и** добавить `toolsets: [hermes-cli, kanban]` |
 | Branch protection на приватном репо не работает | На бесплатном GitHub правила защиты веток не применяются к приватным репозиториям | Принято как есть: PR-дисциплина держится на инструкции агенту, git всё равно даёт полную историю и откат |
 | Долгая индексация обрывается вместе с SSH | — | `tmux` |
 
