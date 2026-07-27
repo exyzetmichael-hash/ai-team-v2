@@ -1,0 +1,6 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Секреты: в репозитории только .env.example, реальные .env — никогда
+.env

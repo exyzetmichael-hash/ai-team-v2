@@ -26,9 +26,25 @@ agent:
     - browser          # тяжёлая браузерная автоматизация; web_search при этом ОСТАЁТСЯ доступен
     - computer_use
     - delegation
-    - kanban           # включим на этапе офиса (docs/phase-5-runbook.md) — тогда же трекер получит связь с brain
     - image_gen
     - video
     - video_gen
     - vision
     - x_search
+    # kanban НЕ выключен (фаза 5, офис): даёт инструменты kanban_create/
+    # kanban_show/kanban_complete и т.д. — как раз ими агенты передают работу
+    # друг другу через общую доску ~/.hermes/kanban.db. Не путать с delegation
+    # выше: то — безымянные сабагенты внутри своего же контекста, а это —
+    # адресная передача задачи другому профилю команды.
+
+# --- Kanban: этот gateway диспетчером НЕ работает (фаза 5) ---
+# В офисе у каждого агента свой gateway (нужен для его Telegram-бота), но
+# диспетчер Kanban должен быть РОВНО ОДИН на всю машину — им назначен
+# секретарский gateway (см. profiles/secretary/config.yaml).
+# Требование самой документации Hermes (docs/kanban/multi-gateway.md):
+# несколько gateway с dispatch_in_gateway=true плодят параллельные SQLite-
+# соединения к общей kanban.db и создают WAL-конкуренцию. Поэтому тут — false.
+# Работу с доской через инструменты kanban_* это НЕ отключает: агент
+# по-прежнему создаёт и закрывает карточки, просто не раздаёт их сам.
+kanban:
+  dispatch_in_gateway: false
