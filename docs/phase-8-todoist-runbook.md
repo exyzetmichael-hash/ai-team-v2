@@ -29,8 +29,10 @@ cd ~/ai-team-v2 && git pull
 cp profiles/secretary/config.yaml  ~/.hermes/profiles/secretary/config.yaml
 cp profiles/secretary/SOUL.md      ~/.hermes/profiles/secretary/SOUL.md
 cp profiles/secretary/MORNING.md   ~/.hermes/profiles/secretary/MORNING.md
-sudo hermes -p secretary gateway restart
+sudo $(which hermes) -p secretary gateway restart
 ```
+
+(`$(which hermes)` — не украшение: gateway секретаря установлен как **системный** сервис, поэтому нужен `sudo`, а `sudo` сбрасывает `PATH` и голый `hermes`, живущий в пользовательском каталоге, не находится — `sudo: hermes: command not found`.)
 
 Что поменялось в этих файлах:
 - **`config.yaml`** — добавлен `mcp_servers.todoist` с фильтром инструментов (см. ниже).
