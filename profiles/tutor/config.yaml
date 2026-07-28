@@ -6,7 +6,13 @@
 # Провайдер — как у всех: OpenRouter, ключ в .env как OPENROUTER_API_KEY.
 # Настраивай мастером `hermes -p tutor model`, не редактируй provider/api_key руками.
 
-timezone: Europe/Moscow
+# Таймзона — где Михаил живёт СЕЙЧАС: Красноярск, UTC+7 (DST в России нет).
+# Не Москва: зону надо спрашивать у человека, а не выводить из его планов —
+# на этом уже обожглись, сводка приходила на 5 часов позже (см. подробный
+# разбор в profiles/secretary/config.yaml).
+# При переезде в Петербург (конец августа 2026) — сменить на Europe/Moscow
+# здесь и во всех профилях, и пересоздать cron-задачи.
+timezone: Asia/Krasnoyarsk
 
 model:
   provider: openrouter
