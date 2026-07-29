@@ -21,9 +21,11 @@ Google-таблица финансов.
 
 ## 1. Новый Telegram-бот
 
-@BotFather → `/newbot` → имя **EDITH** (или как решишь), запомни `username` и токен.
+@BotFather → `/newbot` → имя **EDITH**, запомни `username` и токен.
 **Не переиспользуй** ни один из старых семи ботов — они привязаны к старым username/
 идентичностям, путаница потом дороже, чем завести новый.
+
+✅ Заведён: **`@edith_aiassist_bot`**.
 
 Свой Telegram user id (для allowlist) — у @userinfobot, тот же, что был у старых профилей.
 
