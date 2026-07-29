@@ -264,7 +264,19 @@ with tempfile.TemporaryDirectory() as tmp:
 # ---------------------------------------------------------------------------
 
 sent: list[str] = []
-og._send_to_office = lambda text: sent.append(text) or "ok"  # type: ignore[assignment]
+
+
+def _fake_send_to_office(text: str) -> str:
+    # Повторяет проверку пустой строки из реальной _send_to_office (сеть не
+    # трогаем, но пустой-текст сценарий должен вести себя как в реальности).
+    text = (text or "").strip()
+    if not text:
+        return "Ошибка: пустой текст сообщения."
+    sent.append(text)
+    return "Отправлено в общий чат."
+
+
+og._send_to_office = _fake_send_to_office  # type: ignore[assignment]
 
 # Карточка закрыта, office_report НЕ вызывался -> страховка обязана сработать.
 og._track_kanban_completion(
@@ -279,7 +291,7 @@ if sent:
     check("[страховка] текст содержит summary", "Нашёл цену" in sent[0], True)
     check("[страховка] помечен как автоотчёт", sent[0].startswith("🔧 Автоотчёт"), True)
 
-# Карточка закрыта, office_report ПОЗВАН -> страховка не должна дублировать.
+# Карточка закрыта, office_report ПОЗВАН и УСПЕШНО отправил -> без дублей.
 sent.clear()
 og._track_kanban_completion(
     tool_name="kanban_complete",
@@ -288,10 +300,36 @@ og._track_kanban_completion(
     task_id="sess-2",
 )
 og._track_kanban_completion(
-    tool_name="office_report", args={"text": "своими словами"}, result="ok", task_id="sess-2",
+    tool_name="office_report",
+    args={"text": "своими словами"},
+    result="Отправлено в общий чат.",
+    task_id="sess-2",
 )
 og._maybe_auto_report(session_id="sess-2", task_id="")
 check("[страховка] не дублирует, если модель отчиталась сама", len(sent), 0)
+
+# Карточка закрыта, office_report ПОЗВАН, но ПРОВАЛИЛСЯ (пустой текст, сеть,
+# не задан TELEGRAM_BOT_TOKEN и т.п.) -> страховка обязана сработать всё
+# равно. Живой баг: модель звала office_report несколько раз подряд с
+# незаполненным текстом (сигнатура инструмента была несовместима с тем, как
+# Hermes реально зовёт обработчики — args одним словарём, не **kwargs),
+# каждый вызов возвращал "Ошибка: пустой текст сообщения", а старая версия
+# страховки засчитывала «отчёт был» по самому факту вызова и молчала.
+sent.clear()
+og._track_kanban_completion(
+    tool_name="kanban_complete",
+    args={"task_id": "t_ghi789", "summary": "Актуальные параметры НПД на 2026."},
+    result='{"ok": true}',
+    task_id="sess-2b",
+)
+og._track_kanban_completion(
+    tool_name="office_report",
+    args={},
+    result="Ошибка: пустой текст сообщения.",
+    task_id="sess-2b",
+)
+og._maybe_auto_report(session_id="sess-2b", task_id="")
+check("[страховка] срабатывает, если office_report вызывался, но провалился", len(sent), 1)
 
 # Ошибка в kanban_complete (невалидный task_id и т.п.) -> отчитывать нечего.
 sent.clear()
@@ -315,6 +353,32 @@ og._track_kanban_completion(
 )
 og._maybe_auto_report(session_id="", task_id="t_shared")
 check("[страховка] ключ совпадает при task_id из обоих хуков", len(sent), 1)
+
+# ---------------------------------------------------------------------------
+# 8. office_report сам: сигнатура (args: dict, **kw), НЕ (text=..., **kwargs)
+# ---------------------------------------------------------------------------
+#
+# Hermes зовёт обработчики как entry.handler(args, **kwargs) — весь словарь
+# ОДНИМ позиционным параметром (tools/registry.py). Живой баг: раньше здесь
+# было def office_report(text="", **kwargs) — питон биндил первым позиционным
+# параметром весь ``args`` целиком на имя ``text``, и внутри функции ``text``
+# оказывался словарём, а не строкой (пустой словарь {} даже маскировался под
+# «просто пустой текст» — ложно похоже на рабочее поведение). Этот тест ловит
+# именно вызов в реальной калling convention Hermes, а не то, как удобнее
+# написать самому.
+
+sent.clear()
+result = og.office_report({"text": "Миша, от секретаря пришёл вопрос — вот ответ."})
+check("[office_report] реальная calling convention отправляет текст строкой", sent, [
+    "Миша, от секретаря пришёл вопрос — вот ответ."
+])
+check("[office_report] возвращает подтверждение", result, "Отправлено в общий чат.")
+
+# Пустой args (модель забыла text или его вообще не было в схеме) -> понятная
+# ошибка, а не падение с AttributeError на словаре без .strip().
+sent.clear()
+result = og.office_report({})
+check("[office_report] пустой args -> понятная ошибка, не крэш", result, "Ошибка: пустой текст сообщения.")
 
 # ---------------------------------------------------------------------------
 

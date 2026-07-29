@@ -601,7 +601,14 @@ OFFICE_REPORT_SCHEMA = {
         "Для обычного разговора инструмент не нужен: на сообщение Михаила просто "
         "отвечай там, где он спросил."
     ),
-    "input_schema": {
+    # ВАЖНО: ключ "parameters", НЕ "input_schema". Реестр Hermes читает
+    # именно его (model_tools.py: schema.get("parameters").get("properties"))
+    # — это внутренний OpenAI-style формат, "input_schema" (Anthropic) уже
+    # получается адаптером НА ВЫХОДЕ, до модели он не доходит. С "input_schema"
+    # тут модель не видела параметр `text` вообще и звала инструмент пустым
+    # (поймано на живом прогоне: office_report вызывался, но с пустым текстом,
+    # и падал с "Ошибка: пустой текст сообщения").
+    "parameters": {
         "type": "object",
         "properties": {
             "text": {
@@ -651,18 +658,30 @@ def _send_to_office(text: str) -> str:
         return f"Не удалось отправить в общий чат: {exc}"
 
 
-def office_report(text: str = "", **kwargs) -> str:
+def office_report(args: dict, **kwargs) -> str:
     """Отчитаться о карточке своими словами — вызывает модель.
+
+    Сигнатура ``(args: dict, **kw)``, НЕ ``(text=..., **kwargs)`` — так
+    Hermes реально зовёт обработчики (``tools/registry.py``:
+    ``entry.handler(args, **kwargs)``, весь словарь одним позиционным
+    параметром; см. любой встроенный тул вроде
+    ``tools/kanban_tools.py::_handle_complete(args: dict, **kw)``).
+    С кwargs-сигнатурой этот параметр молча ловил на себя весь ``args`` целиком
+    (питон биндит первый позиционный на первое имя параметра), а `text`
+    внутри функции оказывался словарём, а не строкой — поймано на живом
+    прогоне: модель звала инструмент, а он падал с «пустой текст», хотя текст
+    ей передавался.
 
     Обсуждение при этом идёт в любом топике как обычно: на реплики Михаила
     агент отвечает штатным путём gateway, туда же, где его спросили, — этот
     инструмент к разговору отношения не имеет, только к отчёту по карточке.
 
     Факт вызова фиксирует не эта функция, а хук `post_tool_call`
-    (`_track_kanban_completion` ниже, ветка `tool_name == "office_report"`)
-    — он получает надёжный `task_id` от самого Hermes, а не то, что модель
-    случайно передаст сюда через `**kwargs` инструмента.
+    (`_track_kanban_completion` ниже) — он получает надёжный `task_id` от
+    самого Hermes и, что важнее, сам результат — страховка срабатывает,
+    только если этот вызов реально отправил сообщение, а не просто произошёл.
     """
+    text = str((args or {}).get("text") or "")
     return _send_to_office(text)
 
 
@@ -706,8 +725,19 @@ def _track_kanban_completion(
 ) -> None:
     session_key = _session_key(task_id=task_id, session_id=session_id)
     if tool_name == "office_report":
-        with _lock:
-            _session_reports[session_key] = True
+        # ``_send_to_office`` возвращает "Отправлено в общий чат." при успехе,
+        # "Ошибка: ..."/"Не удалось отправить..." при провале (см. функцию) —
+        # обычная строка, не JSON, `registry._normalize_handler_result`
+        # пропускает строки как есть. ВАЖНО засчитывать только УСПЕХ: на
+        # живом прогоне модель звала office_report несколько раз подряд с
+        # незаполненным текстом (баг сигнатуры инструмента, уже исправлен),
+        # каждый вызов падал с "Ошибка: пустой текст сообщения" — а
+        # страховка засчитывала «отчёт был» по самому факту вызова и не
+        # срабатывала, хотя в чат ничего не ушло.
+        sent = isinstance(result, str) and result.startswith("Отправлено")
+        if sent:
+            with _lock:
+                _session_reports[session_key] = True
         return
     if tool_name not in _COMPLETION_TOOLS:
         return
