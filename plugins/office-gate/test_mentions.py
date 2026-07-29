@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -263,16 +264,16 @@ with tempfile.TemporaryDirectory() as tmp:
 # 7. Страховка: office_report забыт — плагин шлёт отчёт сам из summary
 # ---------------------------------------------------------------------------
 
-sent: list[str] = []
+sent: list[tuple[str, object]] = []  # (текст, thread_id)
 
 
-def _fake_send_to_office(text: str) -> str:
+def _fake_send_to_office(text: str, thread_id=None) -> str:
     # Повторяет проверку пустой строки из реальной _send_to_office (сеть не
     # трогаем, но пустой-текст сценарий должен вести себя как в реальности).
     text = (text or "").strip()
     if not text:
         return "Ошибка: пустой текст сообщения."
-    sent.append(text)
+    sent.append((text, thread_id))
     return "Отправлено в общий чат."
 
 
@@ -288,8 +289,8 @@ og._track_kanban_completion(
 og._maybe_auto_report(session_id="sess-1", task_id="")
 check("[страховка] сработала при забытом office_report", len(sent), 1)
 if sent:
-    check("[страховка] текст содержит summary", "Нашёл цену" in sent[0], True)
-    check("[страховка] помечен как автоотчёт", sent[0].startswith("🔧 Автоотчёт"), True)
+    check("[страховка] текст содержит summary", "Нашёл цену" in sent[0][0], True)
+    check("[страховка] помечен как автоотчёт", sent[0][0].startswith("🔧 Автоотчёт"), True)
 
 # Карточка закрыта, office_report ПОЗВАН и УСПЕШНО отправил -> без дублей.
 sent.clear()
@@ -367,9 +368,10 @@ check("[страховка] ключ совпадает при task_id из об
 # именно вызов в реальной калling convention Hermes, а не то, как удобнее
 # написать самому.
 
+os.environ.pop("HERMES_KANBAN_TASK", None)  # без активной карточки — фолбэк
 sent.clear()
 result = og.office_report({"text": "Миша, от секретаря пришёл вопрос — вот ответ."})
-check("[office_report] реальная calling convention отправляет текст строкой", sent, [
+check("[office_report] реальная calling convention отправляет текст строкой", [s[0] for s in sent], [
     "Миша, от секретаря пришёл вопрос — вот ответ."
 ])
 check("[office_report] возвращает подтверждение", result, "Отправлено в общий чат.")
@@ -379,6 +381,88 @@ check("[office_report] возвращает подтверждение", result,
 sent.clear()
 result = og.office_report({})
 check("[office_report] пустой args -> понятная ошибка, не крэш", result, "Ошибка: пустой текст сообщения.")
+
+# ---------------------------------------------------------------------------
+# 9. Отчёт уходит в топик ТОГО, КТО ПРИСЛАЛ ЗАДАЧУ — не исполнителю самому
+# ---------------------------------------------------------------------------
+#
+# Живая жалоба: "исполнитель не мне ответ кидал, а надо чтобы боту, который
+# его и попросил о задаче". Раньше office_report всегда слал в свой топик
+# исполнителя — Михаил его не видел, потому что сидел в разговоре с тем, кто
+# делегировал. Проверяем на настоящей kanban.db (created_by читается прямым
+# SQLite-запросом), а не только на моках, чтобы поймать опечатку в SQL.
+
+import sqlite3 as _sqlite3  # noqa: E402  (локальный импорт ради изоляции блока)
+
+with tempfile.TemporaryDirectory() as tmp:
+    kanban_db_path = Path(tmp) / "kanban.db"
+    conn = _sqlite3.connect(str(kanban_db_path))
+    conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, created_by TEXT)")
+    conn.execute("INSERT INTO tasks (id, created_by) VALUES (?, ?)", ("t_npd2026", "legal"))
+    conn.execute("INSERT INTO tasks (id, created_by) VALUES (?, ?)", ("t_selfmade", "research"))
+    conn.commit()
+    conn.close()
+
+    os.environ["HERMES_KANBAN_DB"] = str(kanban_db_path)
+    os.environ["OFFICE_TOPIC_MAP"] = json.dumps(
+        {"secretary": "3", "finance": "4", "tracker": "5", "tutor": "6",
+         "brain": "102", "legal": "103", "research": "1"}
+    )
+    os.environ["OFFICE_GROUP_THREAD_ID"] = "1"  # свой топик research — только фолбэк
+
+    # office_report (модель зовёт сама) уходит в топик заказчика (legal=103),
+    # не в свой (research=1).
+    os.environ["HERMES_KANBAN_TASK"] = "t_npd2026"
+    sent.clear()
+    og.office_report({"text": "Проверил ставки НПД на 2026 — без изменений."})
+    check("[заказчик] office_report уходит в топик заказчика (103), не свой (1)", sent, [
+        ("Проверил ставки НПД на 2026 — без изменений.", "103")
+    ])
+
+    # Страховка (авто-фолбэк) — туда же, топик заказчика.
+    sent.clear()
+    og._track_kanban_completion(
+        tool_name="kanban_complete",
+        args={"task_id": "t_npd2026", "summary": "Ставки НПД без изменений."},
+        result='{"ok": true}',
+        task_id="sess-9",
+    )
+    og._maybe_auto_report(session_id="sess-9", task_id="")
+    check("[заказчик] страховка тоже уходит в топик заказчика", len(sent), 1)
+    if sent:
+        check("[заказчик] страховка попала в 103", sent[0][1], "103")
+
+    # Карточку завёл сам исполнитель (self-made) -> фолбэк на свой топик,
+    # не бесконечная петля "самому себе в чужой топик".
+    os.environ["HERMES_KANBAN_TASK"] = "t_selfmade"
+    og._profile_name = lambda: "research"  # type: ignore[assignment]
+    try:
+        sent.clear()
+        og.office_report({"text": "Сам себе завёл карточку и сам отчитался."})
+        check("[заказчик] карточка от себя -> фолбэк на свой топик", sent, [
+            ("Сам себе завёл карточку и сам отчитался.", "1")
+        ])
+    finally:
+        og._profile_name = _real_profile_name  # type: ignore[assignment]
+
+    # Заказчик не найден в карте (например, задачу завёл человек напрямую
+    # через CLI, created_by = его собственный профиль вне нашей семёрки) ->
+    # тоже фолбэк на свой топик, не падение.
+    conn = _sqlite3.connect(str(kanban_db_path))
+    conn.execute("INSERT INTO tasks (id, created_by) VALUES (?, ?)", ("t_unknown", "some_cli_profile"))
+    conn.commit()
+    conn.close()
+    os.environ["HERMES_KANBAN_TASK"] = "t_unknown"
+    sent.clear()
+    og.office_report({"text": "Заказчик не из нашей карты."})
+    check("[заказчик] неизвестный заказчик -> фолбэк на свой топик", sent, [
+        ("Заказчик не из нашей карты.", "1")
+    ])
+
+    os.environ.pop("HERMES_KANBAN_DB", None)
+    os.environ.pop("HERMES_KANBAN_TASK", None)
+    os.environ.pop("OFFICE_TOPIC_MAP", None)
+    os.environ.pop("OFFICE_GROUP_THREAD_ID", None)
 
 # ---------------------------------------------------------------------------
 

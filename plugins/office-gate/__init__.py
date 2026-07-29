@@ -68,13 +68,38 @@
 — чтобы в группе было видно живую передачу работы: кто получил, от кого, что
 сделал.
 
+КУДА уходит отчёт (`_resolve_report_thread`). Не в свой топик, а в топик
+ТОГО, КТО ПРИСЛАЛ ЗАДАЧУ — то есть `created_by` карточки (профиль, вызвавший
+`kanban_create`, а не абстрактный «дежурный»). Первая версия слала в свой
+топик исполнителя: технически корректно, но бесполезно на практике — Михаил
+сидит в разговоре с заказчиком, а к исполнителю никогда не заходит напрямую,
+и узнавал результат только переспросив заказчика, который пересказывал
+своими словами. `created_by` читается прямым SQLite-запросом к `kanban.db`
+(путь — `HERMES_KANBAN_DB` в окружении воркера, инжектится диспетчером),
+топик заказчика — из `OFFICE_TOPIC_MAP` (JSON в `.env`, вся раскладка
+профиль→топик сразу, потому что заказчиком может быть любой из семи).
+Фолбэк на собственный топик — если задачу завёл сам исполнитель, заказчика
+не удалось определить, или его нет в карте (например, карточка заведена
+человеком напрямую через CLI).
+
 СТРАХОВКА (`_track_kanban_completion` / `_maybe_auto_report`). На живом
 прогоне модель закрыла карточку (`kanban_complete`, внятный `summary`), но
 `office_report` так и не позвала — забыла финальный шаг в длинном прогоне с
 десятком инструментов. Инструкция в SOUL — не гарантия. Поэтому `post_tool_call`
 запоминает, что карточка закрыта и чем; `on_session_end`, если к концу турна
-отчёта так и не было, шлёт его сам из `summary`. Текст суше, чем у модели, но
-он ГАРАНТИРОВАН — тишина в топике хуже сухого автотекста.
+отчёта так и не было, шлёт его сам из `summary`, в тот же топик заказчика.
+Текст суше, чем у модели, но он ГАРАНТИРОВАН — тишина в топике хуже сухого
+автотекста.
+
+Отдельно, тоже с живого прогона: сам `office_report` был сломан дважды
+(схема с ключом `input_schema` вместо `parameters`, сигнатура
+`(text=..., **kwargs)` вместо реальной calling convention Hermes
+`(args: dict, **kw)`) — модель получала «пустой текст» на каждой попытке.
+Страховка при этом молчала, потому что старая версия засчитывала «отчёт
+был» по факту вызова, не по факту отправки. Оба бага и обе причины — ниже
+в соответствующих функциях, здесь фиксирую только чтобы не потерять при
+следующей правке: любое изменение сигнатуры/схемы `office_report`
+проверять тестом, а не только чтением кода.
 """
 from __future__ import annotations
 
@@ -594,12 +619,12 @@ def office_gate(event, gateway, session_store, **kwargs):
 OFFICE_REPORT_SCHEMA = {
     "name": "office_report",
     "description": (
-        "Отчитаться о выполненной задаче с доски Kanban в СВОЁМ топике общего "
-        "чата команды, от своего имени. Скажи, от кого была задача, в чём она "
-        "состояла, и дай результат — обычным человеческим текстом, как коллега. "
-        "Топик выбирается автоматически (всегда твой), адресата указывать нельзя. "
-        "Для обычного разговора инструмент не нужен: на сообщение Михаила просто "
-        "отвечай там, где он спросил."
+        "Отчитаться о выполненной задаче с доски Kanban в общем чате команды, "
+        "от своего имени. Скажи, от кого была задача, в чём она состояла, и дай "
+        "результат — обычным человеческим текстом, как коллега. Уходит в топик "
+        "того, кто прислал тебе задачу (выбирается автоматически, адресата "
+        "указывать нельзя). Для обычного разговора инструмент не нужен: на "
+        "сообщение Михаила просто отвечай там, где он спросил."
     ),
     # ВАЖНО: ключ "parameters", НЕ "input_schema". Реестр Hermes читает
     # именно его (model_tools.py: schema.get("parameters").get("properties"))
@@ -621,15 +646,91 @@ OFFICE_REPORT_SCHEMA = {
 }
 
 
-def _send_to_office(text: str) -> str:
-    """Отправить текст в свой топик офисного чата ботом ЭТОГО профиля.
+def _kanban_db_path() -> Optional[Path]:
+    """Путь к kanban.db воркера — инжектится диспетчером в HERMES_KANBAN_DB."""
+    raw = os.environ.get("HERMES_KANBAN_DB", "").strip()
+    return Path(raw) if raw else None
+
+
+def _task_creator(task_id: str) -> Optional[str]:
+    """Кто вызвал ``kanban_create`` для этой карточки — тот и заказчик отчёта.
+
+    ``created_by`` в таблице ``tasks`` пишется как раз этим профилем
+    (``os.environ.get("HERMES_PROFILE")`` в ``tools/kanban_tools.py``, там
+    же, где заводится карточка) — то есть это тот, кто РЕАЛЬНО делегировал
+    задачу, а не абстрактный «дежурный». Открываем базу в режиме только для
+    чтения (``mode=ro``) — воркер не должен ничего в ней менять, только читать.
+    """
+    db_path = _kanban_db_path()
+    if not db_path or not task_id:
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=3.0)
+        try:
+            row = conn.execute(
+                "SELECT created_by FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.debug("office-gate: could not read task creator for %s: %s", task_id, exc)
+        return None
+    return str(row[0]) if row and row[0] else None
+
+
+def _topic_map() -> dict[str, str]:
+    """{профиль: id топика} — та же раскладка, что и в `scripts/setup-office-env.sh`.
+
+    Задаётся один раз через `OFFICE_TOPIC_MAP` (JSON) в `.env` каждого
+    профиля — нужна ВСЯ карта, не только свой топик, потому что отчёт может
+    понадобиться отправить в топик ЛЮБОГО коллеги, который выступил заказчиком.
+    """
+    raw = os.environ.get("OFFICE_TOPIC_MAP", "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items()}
+    except Exception as exc:
+        logger.warning("office-gate: bad OFFICE_TOPIC_MAP (%s)", exc)
+    return {}
+
+
+def _resolve_report_thread(task_id: str) -> Optional[str]:
+    """В какой топик слать отчёт: топик того, кто прислал задачу.
+
+    Раньше отчёт всегда уходил в СВОЙ топик исполнителя — но Михаил обычно
+    сидит в топике того, у кого спрашивал, а не у исполнителя, которого
+    никогда напрямую не звал. Он получал ответ только если сам догадывался
+    зайти к исполнителю или переспрашивал у заказчика, который пересказывал
+    своими словами. Теперь адресуем туда, где Михаил реально ждёт ответ.
+    """
+    creator = _task_creator(task_id) if task_id else None
+    me = _profile_name()
+    if creator and creator != me:
+        topic = _topic_map().get(creator)
+        if topic:
+            return topic
+    # Фолбэк — свой топик: task_id пуст, карточку завёл сам исполнитель,
+    # создатель не в карте (например, задачу завёл человек через голый CLI).
+    return os.environ.get("OFFICE_GROUP_THREAD_ID", "").strip() or None
+
+
+def _send_to_office(text: str, thread_id: Optional[str] = None) -> str:
+    """Отправить текст ботом ЭТОГО профиля в топик того, кто прислал задачу.
 
     Общий низкоуровневый отправитель — используется и инструментом
     `office_report` (модель зовёт сама), и страховкой в `_maybe_auto_report`
-    (плагин зовёт сам, если модель забыла). Адрес жёстко задан окружением
-    профиля (`OFFICE_GROUP_CHAT_ID` + `OFFICE_GROUP_THREAD_ID`), выбрать
-    другой адрес нельзя ни модели, ни коду — «только в свой топик» гарантирует
-    сама эта функция, а не то, кто её вызвал.
+    (плагин зовёт сам, если модель забыла). `thread_id`, если передан, всегда
+    побеждает — резолвится заранее, через `_resolve_report_thread()`, а не
+    внутри этой функции: адрес выбирает КОД (по `created_by` задачи), не
+    модель и не аргумент инструмента.
+
+    Если резолвнуть не удалось (нет активной карточки, создатель неизвестен,
+    его нет в карте топиков) — падаем на собственный топик профиля
+    (`OFFICE_GROUP_THREAD_ID`), чтобы отчёт всё равно куда-то дошёл, а не
+    потерялся молча.
     """
     text = (text or "").strip()
     if not text:
@@ -645,9 +746,9 @@ def _send_to_office(text: str) -> str:
         return "Ошибка: OFFICE_GROUP_CHAT_ID не задан в профиле."
 
     payload: dict = {"chat_id": chat_id, "text": text[:4000]}
-    thread = os.environ.get("OFFICE_GROUP_THREAD_ID", "").strip()
+    thread = thread_id if thread_id is not None else os.environ.get("OFFICE_GROUP_THREAD_ID", "").strip()
     if thread:
-        payload["message_thread_id"] = int(thread) if thread.isdigit() else thread
+        payload["message_thread_id"] = int(thread) if str(thread).isdigit() else thread
 
     try:
         resp = httpx.post(_TELEGRAM_API.format(token=token), json=payload, timeout=15.0)
@@ -676,13 +777,20 @@ def office_report(args: dict, **kwargs) -> str:
     агент отвечает штатным путём gateway, туда же, где его спросили, — этот
     инструмент к разговору отношения не имеет, только к отчёту по карточке.
 
+    Топик — не свой, а того, кто прислал задачу (`_resolve_report_thread`):
+    Михаил сидит в разговоре с заказчиком, а не с исполнителем, которого
+    никогда напрямую не звал, — раньше ответ уходил туда, где его никто не
+    ждал, и Михаил узнавал результат, только переспросив заказчика напрямую.
+
     Факт вызова фиксирует не эта функция, а хук `post_tool_call`
     (`_track_kanban_completion` ниже) — он получает надёжный `task_id` от
     самого Hermes и, что важнее, сам результат — страховка срабатывает,
     только если этот вызов реально отправил сообщение, а не просто произошёл.
     """
     text = str((args or {}).get("text") or "")
-    return _send_to_office(text)
+    task_id = os.environ.get("HERMES_KANBAN_TASK", "").strip()
+    thread_id = _resolve_report_thread(task_id) if task_id else None
+    return _send_to_office(text, thread_id=thread_id)
 
 
 # ---------------------------------------------------------------------------
@@ -772,9 +880,10 @@ def _maybe_auto_report(session_id: str = "", task_id: str = "", **kwargs) -> Non
         already_reported = _session_reports.pop(session_key, False)
     if not completion or already_reported:
         return
-    _task_id, text = completion
-    logger.info("office-gate: office_report was not called for %s, sending fallback", _task_id)
-    _send_to_office(f"🔧 Автоотчёт (не написал сам): {text}")
+    completed_task_id, text = completion
+    logger.info("office-gate: office_report was not called for %s, sending fallback", completed_task_id)
+    thread_id = _resolve_report_thread(completed_task_id) if completed_task_id != "?" else None
+    _send_to_office(f"🔧 Автоотчёт (не написал сам): {text}", thread_id=thread_id)
 
 
 def register(ctx) -> None:

@@ -29,9 +29,12 @@ PROFILES_DIR="$HOME/.hermes/profiles"
 
 # профиль : id топика : username бота (без @)
 #
-# Топик — куда агент кладёт отчёты о выполненных карточках Kanban, и только
-# туда. На обычный разговор это не влияет: в чате агент отвечает в том топике,
-# где его спросили.
+# Свой топик профиля — куда падает /sethome-домашний канал и куда уходит
+# отчёт по карточке, ЕСЛИ заказчика определить не удалось (фолбэк). В
+# обычном режиме office_report уходит в топик ТОГО, КТО ПРИСЛАЛ ЗАДАЧУ, а не
+# в свой — см. _resolve_report_thread в plugins/office-gate/__init__.py.
+# Поэтому нужна вся карта целиком (OFFICE_TOPIC_MAP ниже), а не только своя
+# строка: заказчиком карточки может стать любой из семи.
 #
 # research сидит в General (1) — отдельного топика под ресёрч нет.
 ROWS=(
@@ -44,12 +47,22 @@ ROWS=(
   "research:1:autresearcher_bot"
 )
 
+# JSON-карта {профиль: id_топика} — та же раскладка, что в ROWS выше, но
+# собранная один раз для передачи КАЖДОМУ профилю целиком.
+TOPIC_MAP_JSON="{"
+for row in "${ROWS[@]}"; do
+  IFS=":" read -r profile thread _bot <<< "$row"
+  TOPIC_MAP_JSON+="\"$profile\":$thread,"
+done
+TOPIC_MAP_JSON="${TOPIC_MAP_JSON%,}}"
+
 KEYS=(
   TELEGRAM_GROUP_ALLOWED_CHATS
   OFFICE_GROUP_CHAT_ID
   OFFICE_GROUP_THREAD_ID
   OFFICE_BOT_USERNAME
   OFFICE_DEFAULT_RESPONDER
+  OFFICE_TOPIC_MAP
   TELEGRAM_HOME_CHANNEL
   TELEGRAM_HOME_CHANNEL_THREAD_ID
 )
@@ -75,6 +88,7 @@ for row in "${ROWS[@]}"; do
     echo "OFFICE_GROUP_THREAD_ID=$thread"
     echo "OFFICE_BOT_USERNAME=$bot"
     echo "OFFICE_DEFAULT_RESPONDER=secretary"
+    echo "OFFICE_TOPIC_MAP=$TOPIC_MAP_JSON"
     # Делает то же самое, что и команда /sethome в чате, но раз и навсегда:
     # без этого каждый профиль при первом сообщении в НОВОЙ для себя сессии
     # спрашивает "No home channel is set" и ждёт /sethome вручную. Ставим
