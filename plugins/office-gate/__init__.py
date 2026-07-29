@@ -18,14 +18,28 @@
 
   1. Личка — пропускаем. Там и так пишут конкретно этому агенту.
   2. Реплай на моё же сообщение — пропускаем, разговор продолжается со мной.
+     Работает, только если Михаил реально свайпнул Telegram-реплай.
   3. Слэш-команда с @упоминанием бота (`/sethome@legalllmbot`) — обрабатывает
      только названный бот. Без этого правила на одну служебную команду
      отвечали все семеро (поймано на живом прогоне).
   4. Названо МОЁ имя — пропускаем. Без модели, детерминированно.
   5. Названо ЧУЖОЕ имя (а моё — нет) — молчим. Без модели.
-  6. Имени нет — идём к арбитру (см. ниже).
+  6. Я отвечал(а) последним в ЭТОМ топике недавно (см. ЛИПКОСТЬ ниже) —
+     разговор продолжается со мной без вызова модели.
+  7. Ничего из вышеперечисленного — идём к арбитру (см. ниже).
 
-АРБИТР (пункт 6). Все семь процессов видят одно и то же сообщение. Они
+ЛИПКОСТЬ ТРЕДА (пункт 6). На живом прогоне короткие реплики без имени и без
+свайп-реплая («да», «надо», «ага» — продолжение разговора, набранное просто
+следующей строкой, как обычно и пишут в мессенджере) каждый раз уходили к
+арбитру заново и падали на дежурного (секретаря) — воспринималось как «я
+разговариваю с юристом, а секретарь перебивает». Причина: у арбитра нет
+памяти о том, кто отвечал в этом топике минуту назад, он видит только голый
+текст текущего сообщения. Плагин запоминает в общей SQLite (`last_speaker`),
+кто последним ответил в каждом (чат, топик), и держит это 10 минут
+(`OFFICE_THREAD_STICKY_SECONDS`) — достаточно для обмена репликами, но не
+весь день. Именованное обращение (пункты 3-5) всё равно перебивает липкость.
+
+АРБИТР (пункт 7). Все семь процессов видят одно и то же сообщение. Они
 атомарно борются за право решить: `INSERT OR IGNORE` в общую SQLite-таблицу
 `~/.hermes/office-routing.db`. Победитель делает ОДИН вызов модели, показав ей
 СРАЗУ ВЕСЬ состав команды с описаниями ролей, и просит выбрать ровно одного
@@ -277,6 +291,15 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS last_speaker (
+            thread_key TEXT PRIMARY KEY,
+            profile    TEXT NOT NULL,
+            at         REAL NOT NULL
+        )
+        """
+    )
     return conn
 
 
@@ -291,6 +314,61 @@ def _msg_key(event, source) -> str:
         # так что ключ у них совпадёт.
         mid = f"t{int(time.time())}:{hash((getattr(event, 'text', '') or '')) & 0xffffff}"
     return f"{platform}:{chat}:{thread}:{mid}"
+
+
+def _thread_key(source) -> str:
+    """Ключ ТРЕДА (без id сообщения) — для «кто последний отвечал здесь»."""
+    platform = getattr(getattr(source, "platform", None), "value", "") or "?"
+    chat = str(getattr(source, "chat_id", "") or "?")
+    thread = str(getattr(source, "thread_id", "") or "")
+    return f"{platform}:{chat}:{thread}"
+
+
+# Сколько секунд «я отвечал последним в этом топике» ещё считается тем же
+# разговором. Не бесконечно: иначе первый же ответивший навсегда забирает
+# топик себе, а Михаил явно хотел «обсуждение в любом топике», не «топик
+# закреплён за одним агентом». 10 минут — с запасом на обычный обмен
+# репликами, но не весь день. Переопределяется через
+# OFFICE_THREAD_STICKY_SECONDS для калибровки без передеплоя кода.
+_THREAD_STICKY_SECONDS = float(os.environ.get("OFFICE_THREAD_STICKY_SECONDS", "600") or 600)
+
+
+def _note_last_speaker(source, me: str) -> None:
+    """Запомнить, что в этом треде только что ответил ``me`` (best-effort)."""
+    try:
+        conn = _connect()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO last_speaker (thread_key, profile, at) VALUES (?, ?, ?)",
+                (_thread_key(source), me, time.time()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.debug("office-gate: could not note last speaker: %s", exc)
+
+
+def _last_speaker(source) -> Optional[str]:
+    """Кто последним отвечал в этом треде, если это было недавно."""
+    try:
+        conn = _connect()
+        try:
+            row = conn.execute(
+                "SELECT profile, at FROM last_speaker WHERE thread_key = ?",
+                (_thread_key(source),),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.debug("office-gate: could not read last speaker: %s", exc)
+        return None
+    if not row:
+        return None
+    profile, at = row
+    if time.time() - float(at) > _THREAD_STICKY_SECONDS:
+        return None
+    return str(profile)
 
 
 def _claim_or_wait(key: str, me: str, decide) -> Optional[str]:
@@ -453,8 +531,11 @@ def office_gate(event, gateway, session_store, **kwargs):
         if source is None or getattr(source, "chat_type", "dm") == "dm":
             return None
 
-        # 2. Отвечают на моё же сообщение — разговор продолжается со мной
+        # 2. Отвечают на моё же сообщение — разговор продолжается со мной.
+        # Работает только если Михаил реально свайпнул Telegram-реплай — на
+        # обычное «следующей строкой» не срабатывает, для этого шаг 6 ниже.
         if getattr(event, "reply_to_is_own_message", False):
+            _note_last_speaker(source, _profile_name())
             return None
 
         text = getattr(event, "text", "") or ""
@@ -465,11 +546,26 @@ def office_gate(event, gateway, session_store, **kwargs):
         # 3-5. Детерминированная адресация, без модели и без базы
         decided = decide_route(text, me, table, bot_username)
         if decided == me:
+            _note_last_speaker(source, me)
             return None
         if decided == "":
             return {"action": "skip", "reason": "office-gate: addressed to someone else"}
 
-        # 6. Имени нет — арбитр решает один раз на всех
+        # 6. Имени нет и это не формальный реплай — но если Я отвечал(а)
+        # последним в ЭТОМ топике недавно, разговор явно продолжается со мной.
+        # Без этого шага короткие реплики без свайп-реплая («да», «надо»,
+        # «ага») каждый раз шли к арбитру заново и падали на дежурного —
+        # ощущалось как «секретарь перебивает разговор с юристом» (поймано
+        # на живом прогоне). Именованное обращение (шаги 3-5) всё равно
+        # перебивает липкость — позвал другого явно, тот и отвечает.
+        sticky = _last_speaker(source)
+        if sticky is not None:
+            if sticky == me:
+                _note_last_speaker(source, me)
+                return None
+            return {"action": "skip", "reason": f"office-gate: thread sticky to '{sticky}'"}
+
+        # 7. Ни имени, ни недавнего собеседника — арбитр решает один раз на всех
         key = _msg_key(event, source)
         assignee = _claim_or_wait(key, me, lambda: _pick_assignee(text))
         if assignee is None:
@@ -477,6 +573,7 @@ def office_gate(event, gateway, session_store, **kwargs):
             # осталось без ответа и при этом не ответили все разом.
             assignee = _default_responder()
         if assignee == me:
+            _note_last_speaker(source, me)
             return None
         return {"action": "skip", "reason": f"office-gate: routed to '{assignee}'"}
 

@@ -180,7 +180,87 @@ with tempfile.TemporaryDirectory() as tmp:
     )
 
 # ---------------------------------------------------------------------------
-# 6. Страховка: office_report забыт — плагин шлёт отчёт сам из summary
+# 6. Липкость треда: короткая реплика без имени продолжает разговор
+#    с тем, кто отвечал последним в ЭТОМ топике — не падает на дежурного
+# ---------------------------------------------------------------------------
+
+
+class _FakeSource:
+    def __init__(self, chat_id="-100999", thread_id="103", platform="telegram", chat_type="group"):
+        self.chat_id = chat_id
+        self.thread_id = thread_id
+        self.chat_type = chat_type
+
+        class _P:
+            value = platform
+
+        self.platform = _P()
+
+
+class _FakeEvent:
+    def __init__(self, text, source, reply_to_is_own_message=False, message_id=None):
+        self.text = text
+        self.source = source
+        self.reply_to_is_own_message = reply_to_is_own_message
+        self.message_id = message_id
+
+
+_real_profile_name = og._profile_name
+
+
+def _run_gate_as(profile: str, text: str, src, message_id: str):
+    """office_gate() от лица конкретного профиля — без плясок с HERMES_HOME."""
+    og._profile_name = lambda: profile  # type: ignore[assignment]
+    try:
+        return og.office_gate(_FakeEvent(text, src, message_id=message_id), None, None)
+    finally:
+        og._profile_name = _real_profile_name  # type: ignore[assignment]
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.environ["OFFICE_ROUTING_DB"] = str(Path(tmp) / "sticky.db")
+    os.environ["OFFICE_DEFAULT_RESPONDER"] = "secretary"
+    os.environ.pop("OPENROUTER_API_KEY", None)  # арбитр не должен понадобиться
+
+    src = _FakeSource(thread_id="103")  # топик «право»
+
+    # Юрист отвечает на именованное обращение — и запоминается как собеседник.
+    r1 = _run_gate_as("legal", "юрист, какой ндс?", src, "m1")
+    check("[липкость] юрист отвечает на своё имя", r1, None)
+
+    # Секретарь на ТУ ЖЕ реплику: она с чужим именем — молчит по шагам 3-5,
+    # до липкости дело не доходит вовсе (проверка, что порядок шагов верный).
+    r2 = _run_gate_as("secretary", "юрист, какой ндс?", src, "m1")
+    check("[липкость] именованное обращение к другому — молчим (не по липкости)", r2["action"], "skip")
+
+    # Главный кейс: короткая реплика БЕЗ имени и без свайп-реплая — «да».
+    # У юриста она продолжает разговор — он последний отвечавший в этом топике.
+    r3 = _run_gate_as("legal", "да", src, "m2")
+    check("[липкость] юрист продолжает разговор без имени", r3, None)
+
+    # У секретаря та же реплика — обязан промолчать, а не отвечать «дежурным».
+    # Раньше именно так секретарь «перебивал» разговор с юристом.
+    r4 = _run_gate_as("secretary", "да", src, "m2")
+    check("[липкость] секретарь МОЛЧИТ, а не отвечает дежурным", r4["action"] if r4 else None, "skip")
+    if r4:
+        check("[липкость] причина — липкость, не дежурный", "sticky" in r4.get("reason", ""), True)
+
+    # Именованное обращение всё равно перебивает липкость к юристу.
+    r5 = _run_gate_as("finance", "финансист, а по деньгам как?", src, "m3")
+    check("[липкость] именованный финансист отвечает несмотря на липкость к юристу", r5, None)
+
+    # Просрочка: старая запись за пределами окна — липкость больше не действует.
+    conn = og._connect()
+    conn.execute(
+        "UPDATE last_speaker SET at = ? WHERE thread_key = ?",
+        (0.0, og._thread_key(src)),
+    )
+    conn.commit()
+    conn.close()
+    check("[липкость] просроченная запись игнорируется", og._last_speaker(src), None)
+
+# ---------------------------------------------------------------------------
+# 7. Страховка: office_report забыт — плагин шлёт отчёт сам из summary
 # ---------------------------------------------------------------------------
 
 sent: list[str] = []

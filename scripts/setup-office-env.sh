@@ -50,6 +50,8 @@ KEYS=(
   OFFICE_GROUP_THREAD_ID
   OFFICE_BOT_USERNAME
   OFFICE_DEFAULT_RESPONDER
+  TELEGRAM_HOME_CHANNEL
+  TELEGRAM_HOME_CHANNEL_THREAD_ID
 )
 
 for row in "${ROWS[@]}"; do
@@ -73,6 +75,13 @@ for row in "${ROWS[@]}"; do
     echo "OFFICE_GROUP_THREAD_ID=$thread"
     echo "OFFICE_BOT_USERNAME=$bot"
     echo "OFFICE_DEFAULT_RESPONDER=secretary"
+    # Делает то же самое, что и команда /sethome в чате, но раз и навсегда:
+    # без этого каждый профиль при первом сообщении в НОВОЙ для себя сессии
+    # спрашивает "No home channel is set" и ждёт /sethome вручную. Ставим
+    # ту же переменную, что ставит сама команда (gateway/run.py
+    # _home_target_env_var), тем же значением — свой топик группы.
+    echo "TELEGRAM_HOME_CHANNEL=$GROUP_ID"
+    echo "TELEGRAM_HOME_CHANNEL_THREAD_ID=$thread"
   } >> "$env_file"
 
   chmod 600 "$env_file"
