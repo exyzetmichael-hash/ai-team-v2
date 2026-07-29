@@ -1,87 +1,189 @@
 #!/usr/bin/env python3
-"""Тест распознавания обращений по имени в office-gate.
+"""Тесты office-gate v3 — детерминированная адресация и арбитр.
 
-Зачем отдельный тест: пункты 3-4 гейта (позвали меня / позвали другого)
-решают судьбу сообщения БЕЗ обращения к модели — то есть ошибка здесь
-означает, что агент молча промолчит или наоборот влезет в чужой разговор,
-и никакой классификатор это уже не исправит.
+Запуск (без pytest и без сети):
+    python3 plugins/office-gate/test_mentions.py
+
+Зачем: адресация решает судьбу сообщения БЕЗ обращения к модели, а арбитр
+гарантирует «отвечает ровно один». Оба провала живого прогона зафиксированы
+здесь кейсами: семеро отвечающих на одно сообщение и реакция всех ботов на
+служебную команду вида `/sethome@legalllmbot`.
 
 Первая версия ловила основу «мозг» внутри «мозговой штурм» — отсюда
-ограничение на длину окончания в `_mentions`. Негативные кейсы ниже
-зафиксированы, чтобы это не вернулось.
-
-Запуск (без pytest, зависимостей не нужно):
-    python3 plugins/office-gate/test_mentions.py
+ограничение на длину окончания в `_mentions`, негативные кейсы ниже держат это.
 """
 from __future__ import annotations
 
 import importlib.util
-import pathlib
+import os
 import sys
-import types
+import tempfile
+import threading
+from pathlib import Path
 
-# httpx нужен модулю только для сетевого классификатора, который тут не
-# вызывается — подсовываем заглушку, чтобы тест работал где угодно.
-sys.modules.setdefault("httpx", types.ModuleType("httpx"))
+# Заглушка httpx до импорта модуля — тест не должен ходить в сеть.
+sys.modules.setdefault("httpx", type(sys)("httpx"))
 
 _spec = importlib.util.spec_from_file_location(
-    "office_gate", pathlib.Path(__file__).with_name("__init__.py")
+    "office_gate_under_test", Path(__file__).with_name("__init__.py")
 )
 og = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(og)
 
-# (текст сообщения, кто должен быть распознан)
-POSITIVE = [
-    ("секретарь, поставь напоминание", "secretary"),
-    ("секретарю: перенеси встречу", "secretary"),
-    ("секретарями не разбрасываемся", "secretary"),
-    ("спроси у юриста про договор", "legal"),
+ROLES = list(og.ROLE_ALIASES)
+failures: list[str] = []
+
+
+def check(label: str, got, want) -> None:
+    if got != want:
+        failures.append(f"{label}: получили {got!r}, ожидали {want!r}")
+
+
+def route(text: str, me: str, bot_username: str = "") -> str | None:
+    return og.decide_route(text, me, og._aliases(), bot_username)
+
+
+# ---------------------------------------------------------------------------
+# 1. Обращение по имени: названный отвечает, остальные молчат
+# ---------------------------------------------------------------------------
+
+named_cases = [
+    ("секретарь, поставь напоминание на пятницу", "secretary"),
+    ("секретарю передай, что встреча в 5", "secretary"),
     ("юрист, глянь оферту", "legal"),
-    ("мозг, что там в vault", "brain"),
-    ("поговори с мозгом об этом", "brain"),
-    ("финансист, сколько потратил", "finance"),
-    ("что там с финансами", "finance"),
-    ("ресёрчер, найди цены", "research"),
-    ("исследователь, копни тему", "research"),
-    ("тьютор, объясни линал", "tutor"),
-    ("трекер, что по fintracker", "tracker"),
-    ("brain, посмотри заметки", "brain"),
+    ("вопрос юристу по договору", "legal"),
+    ("мозг, найди заметку про хермес", "brain"),
+    ("финансист, сколько я потратил", "finance"),
+    ("репетитор, объясни производные", "tutor"),
+    ("тьютор, давай задачу по алгоритмам", "tutor"),
+    ("трекер, что там по проектам", "tracker"),
+    ("ресёрчер, найди статью", "research"),
+    ("исследователь, проверь источники", "research"),
+    ("brain, посмотри в vault", "brain"),
+    ("legal, проверь договор", "legal"),
 ]
 
-# Никого звать не должны: похожие слова, но обращения нет.
-NEGATIVE = [
-    "привет, как дела",
-    "надо провести мозговой штурм",
-    "мозговая активность",
+for text, owner in named_cases:
+    check(f"[имя] {text!r} -> {owner} отвечает", route(text, owner), owner)
+    for other in ROLES:
+        if other == owner:
+            continue
+        check(f"[имя] {text!r} -> {other} молчит", route(text, other), "")
+
+# ---------------------------------------------------------------------------
+# 2. Ложные срабатывания: слово похоже на имя роли, но обращения нет
+# ---------------------------------------------------------------------------
+
+for text in [
+    "надо провести мозговой штурм по проекту",
+    "мозговая активность вечером падает",
     "финансирование проекта одобрено",
-    "юридический адрес компании",
-    "что по погоде",
-]
+    "юридический адрес компании поменялся",
+    "исследовательская работа сдана",
+    "преподавательский состав сменился",
+]:
+    for role in ROLES:
+        check(f"[ложное] {text!r} -> {role} к арбитру", route(text, role), None)
 
+# ---------------------------------------------------------------------------
+# 3. Без имени — решает арбитр, а не каждый сам за себя
+# ---------------------------------------------------------------------------
 
-def main() -> int:
-    table = og._aliases()
-    failures = 0
+for text in [
+    "что там у меня по деньгам за неделю",
+    "какие последние записи по AI team?",
+    "привет, как дела",
+    "все закройте ебальники",
+]:
+    for role in ROLES:
+        check(f"[без имени] {text!r} -> {role} к арбитру", route(text, role), None)
 
-    for text, expected in POSITIVE:
-        hits = [p for p, stems in table.items() if og._mentions(text.lower(), stems)]
-        if hits != [expected]:
-            failures += 1
-            print(f"FAIL  {text!r}: ожидался [{expected!r}], получено {hits}")
+# ---------------------------------------------------------------------------
+# 4. Слэш-команды: отвечает только адресованный бот
+# ---------------------------------------------------------------------------
 
-    for text in NEGATIVE:
-        hits = [p for p, stems in table.items() if og._mentions(text.lower(), stems)]
-        if hits:
-            failures += 1
-            print(f"FAIL  {text!r}: ложное срабатывание {hits}")
+check(
+    "[slash] /sethome@legalllmbot -> legal отвечает",
+    route("/sethome@legalllmbot", "legal", "legalllmbot"),
+    "legal",
+)
+for role in ROLES:
+    if role == "legal":
+        continue
+    check(
+        f"[slash] /sethome@legalllmbot -> {role} молчит",
+        route("/sethome@legalllmbot", role, f"{role}_bot"),
+        "",
+    )
+check("[slash] /start без адресата -> к арбитру", route("/start", "secretary", "sec_bot"), None)
 
-    total = len(POSITIVE) + len(NEGATIVE)
-    if failures:
-        print(f"\n{failures} из {total} провалено")
-        return 1
-    print(f"OK — все {total} проверок прошли")
-    return 0
+# ---------------------------------------------------------------------------
+# 5. Арбитр: гонка семи процессов даёт ровно одного отвечающего
+# ---------------------------------------------------------------------------
 
+with tempfile.TemporaryDirectory() as tmp:
+    os.environ["OFFICE_ROUTING_DB"] = str(Path(tmp) / "routing.db")
+    os.environ["OFFICE_DEFAULT_RESPONDER"] = "secretary"
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+    decide_calls: list[str] = []
+    calls_lock = threading.Lock()
+    res_lock = threading.Lock()
+
+    def fake_decide() -> str:
+        with calls_lock:
+            decide_calls.append("x")
+        return "finance"
+
+    results: dict[str, str | None] = {}
+    barrier = threading.Barrier(len(ROLES))
+
+    def worker(role: str) -> None:
+        barrier.wait()  # стартуем одновременно — это и есть гонка
+        got = og._claim_or_wait("test:key:1", role, fake_decide)
+        with res_lock:
+            results[role] = got
+
+    threads = [threading.Thread(target=worker, args=(r,)) for r in ROLES]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    check("[арбитр] модель спрошена ровно один раз", len(decide_calls), 1)
+    check("[арбитр] все семеро видят одно решение", set(results.values()), {"finance"})
+    check("[арбитр] отвечает ровно один", [r for r, a in results.items() if a == r], ["finance"])
+
+    # Модель недоступна: решение всё равно должно появиться (дежурный), а не
+    # выродиться в «ждём таймаут и каждый решает сам» — это и был путь к
+    # семи одновременным ответам.
+    def never_decides() -> str:
+        raise RuntimeError("модель недоступна")
+
+    stuck: dict[str, str | None] = {}
+
+    def worker2(role: str) -> None:
+        got = og._claim_or_wait("test:key:2", role, never_decides)
+        with res_lock:
+            stuck[role] = got
+
+    threads = [threading.Thread(target=worker2, args=(r,)) for r in ROLES]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    check("[сбой] решение подменено дежурным", set(stuck.values()), {"secretary"})
+    check(
+        "[сбой] отвечает ровно дежурный",
+        [r for r, a in stuck.items() if a == r],
+        ["secretary"],
+    )
+
+# ---------------------------------------------------------------------------
+
+if failures:
+    print(f"ПРОВАЛЕНО — {len(failures)} проверок:\n")
+    for f in failures:
+        print("  •", f)
+    sys.exit(1)
+print("OK — все проверки прошли")
