@@ -1,79 +1,60 @@
-# profiles/ — определения агентов
+# profiles/ — определение агента
 
-Каждый агент = отдельный **профиль** Hermes (свой дом, память, конфиг, Telegram-бот).
-Здесь лежит версионируемая часть профиля: характер и несекретные настройки.
-Секреты (ключи, токены) в git не хранятся — только шаблоны `.env.example` (у каждого
-профиля свой, набор секретов разный: у секретаря Telegram-токен, у brain — GitHub PAT
-и путь к vault).
+Один профиль Hermes — **EDITH**: единственный ассистент, один Telegram-бот, одна память.
+
+## История
+
+До этого здесь была «офисная» семёрка отдельных профилей-личностей (secretary, brain,
+finance, tutor, tracker, research, legal), каждый со своим Telegram-ботом, координацией
+через Kanban-доску и плагин `office-gate` (гейт группового чата + арбитраж + межагентная
+передача задач). Технически всё это работало — см. `docs/phase-0-verification.md` —
+`docs/phase-6-runbook.md` за архивной историей. На практике сам формат «переписываться с
+семью коллегами по отдельности» не подошёл: правильная реализация неправильной идеи.
+Решение и обсуждение, приведшее к развороту, — в истории этой сессии, не в отдельном файле.
+
+Специализация осталась — просто внутри одного агента через `delegation` (fork/join
+сабагенты, `tools/delegate_tool.py`), а не через отдельные боты и Kanban-передачу.
 
 ## Раскладка
 ```
 profiles/
-├── .env.example              # шаблон секретов ИМЕННО для secretary (не общий!)
-├── secretary/
-│   ├── SOUL.md               # личность и инструкции секретаря
-│   ├── MORNING.md            # чеклист утренней сводки (по cron, см. фаза 2)
-│   └── config.yaml           # модель, timezone, terminal (ради Google Calendar), approvals
-├── brain/
-│   ├── SOUL.md                       # личность второго мозга
-│   ├── config.yaml                   # модель, filesystem+graphify MCP, terminal.cwd
-│   ├── .env.example                  # шаблон секретов ИМЕННО для brain
-│   └── skills/vault-pr-write/SKILL.md  # запись в vault только через PR
-│
-│   # --- фаза 7: лёгкие роли, у всех одинаковая структура (SOUL.md + config.yaml) ---
-├── finance/                  # личные деньги: траты, доходы, накопления
-├── tutor/                    # самообразование; ЕДИНСТВЕННЫЙ с code_execution
-├── tracker/                  # состояние проектов и открытые вопросы
-├── research/                 # ресёрч с источниками; веб-поиск критичен
-└── legal/                    # право фрилансера; веб-поиск критичен
+└── edith/
+    ├── SOUL.md                       # личность — сплав секретаря + второго мозга + финансиста
+    ├── MORNING.md                    # чеклист утренней сводки (по cron): календарь, Todoist, таблица финансов
+    ├── config.yaml                   # модель, timezone, terminal (Google Workspace), MCP (vault/graphify/todoist)
+    ├── .env.example                  # шаблон секретов
+    └── skills/vault-pr-write/SKILL.md  # запись в vault только через PR
 
-plugins/                       # общие для всех профилей, ставятся выборочно
-├── budget-guard/               # мягкое предупреждение о балансе OpenRouter (ставится ВСЕМ)
-└── office-gate/                # дешёвый гейт группового чата (фаза 5, черновик)
+plugins/
+└── budget-guard/                     # мягкое предупреждение о балансе OpenRouter
 ```
 
-## Кто что может — сводка по доступам
-Принцип из брифа (3.3): **файловая система только у второго мозга**. Отступления — только
-вынужденные и явно обоснованные:
-
-| Профиль | terminal | code_exec | файлы/vault | веб-поиск |
-|---|---|---|---|---|
-| `secretary` | ✅ вынужденно (Google Calendar-скилл работает только через shell) | ❌ | ❌ | ✅ |
-| `brain` | ✅ заперт в vault (`terminal.cwd`) | ❌ | ✅ через MCP | ✅ |
-| `tutor` | ❌ | ✅ (проверка решений запуском) | ❌ | ✅ |
-| `finance`, `tracker`, `research`, `legal` | ❌ | ❌ | ❌ | ✅ |
-
-`web_search`/`web_extract` доступны везде (тулсет `web` нигде не отключён) — для `research`
-и `legal` это критично для роли, остальным просто не мешает. `browser` (тяжёлая автоматизация)
-отключён у всех.
+## Доступы
+`terminal` — вынужденно (Google Workspace-скилл — Calendar и Sheets — работает только
+через shell, `google_api.py`), полноценный шелл, риск смягчён `approvals.mode: manual`.
+`code_execution` — выключен по умолчанию (арифметика по деньгам считается вручную с
+показом выкладок, см. SOUL.md); включить, если начнёт ошибаться на длинных списках.
+`browser`/`computer_use` — выключены (тяжёлая автоматизация не нужна). `delegation` —
+**включена** (это и есть механизм внутренней специализации, ключевое отличие от старого
+офиса). `web_search`/`web_extract` — доступны всегда.
 
 ## Как это попадает на VPS
-На VPS профиль живёт в `~/.hermes/profiles/<name>/`. Общая форма (секреты — из шаблона
-именно этого профиля, не из чужого):
 ```bash
-hermes profile create <name>
-cp profiles/<name>/SOUL.md    ~/.hermes/profiles/<name>/SOUL.md
-cp profiles/<name>/config.yaml ~/.hermes/profiles/<name>/config.yaml
-cp profiles/<name>/.env.example ~/.hermes/profiles/<name>/.env   # затем вписать значения
+hermes profile create edith
+cp profiles/edith/SOUL.md         ~/.hermes/profiles/edith/SOUL.md
+cp profiles/edith/MORNING.md      ~/.hermes/profiles/edith/MORNING.md
+cp profiles/edith/config.yaml     ~/.hermes/profiles/edith/config.yaml
+cp -r profiles/edith/skills       ~/.hermes/profiles/edith/skills
+cp profiles/edith/.env.example    ~/.hermes/profiles/edith/.env   # затем вписать значения
 ```
-Подробные пошаговые инструкции — по фазам, не здесь: секретарь — `docs/phase-1-runbook.md`
-(база) и `docs/phase-2-runbook.md` (календарь/сводки/бюджет); brain — `docs/phase-3-runbook.md`;
-пять новых ролей — `docs/phase-7-roles-runbook.md` (один общий шаблон на все);
-Todoist у секретаря — `docs/phase-8-todoist-runbook.md`;
-офис (Kanban + office-gate) — `docs/phase-5-runbook.md`; веб-доступ — `docs/phase-6-runbook.md`.
+Полная пошаговая инструкция (новый Telegram-бот, Google OAuth с добавленным scope Sheets,
+перенос vault-путей от старого brain, финансовая Google-таблица, дашборд) —
+`docs/phase-9-edith-runbook.md`.
 
-## Статус агентов
+## Статус
 | Профиль | Роль | Статус |
 |---|---|---|
-| `secretary` | дедлайны, напоминания, календарь, сводки, Todoist | ✅ работает вживую (фазы 1-2, 8) |
-| `brain` | второй мозг, vault через PR, Graphify | ✅ работает вживую (фаза 3) |
-| `finance` | личные деньги: траты, доходы, накопления | ✅ работает вживую (фаза 7) |
-| `tutor` | самообразование: математика, Python, ML | ✅ работает вживую (фаза 7) |
-| `tracker` | состояние проектов, открытые вопросы | ✅ работает вживую (фаза 7) |
-| `research` | ресёрч с источниками | ✅ работает вживую (фаза 7) |
-| `legal` | право фрилансера, договоры, ИП/самозанятость | ✅ работает вживую (фаза 7) |
-| `market` | маркетплейсер WB/Ozon | главный бизнес-приоритет, фаза 4, старт ~сентябрь — тестить пока негде |
-| `coder` | код, репозитории, PR | снято с приоритета — владелец кодит сам с Claude Code |
+| `edith` | единственный ассистент: время/календарь/Todoist, vault-память, личные финансы + право/учёба/трекинг-проектов/ресёрч как внутренние умения | 🚧 строится |
 
-Отклонённые роли (предлагались, Михаил отказался): спорт/фитнес, health-коуч,
-фриланс-менеджер, контент/соцсети, отдельный координатор поступления.
+`market` (маркетплейсер WB/Ozon) и `coder` — вне периметра EDITH, статус не менялся
+(маркетплейсер — фаза 4, старт ~сентябрь; coder снят с приоритета, владелец кодит сам).

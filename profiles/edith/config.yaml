@@ -1,0 +1,146 @@
+# Конфиг профиля "edith" для Hermes.
+#
+# Куда это кладётся на VPS:
+#   ~/.hermes/profiles/edith/config.yaml
+#
+# EDITH заменяет собой всю "офисную" семёрку (secretary/brain/finance/tutor/
+# tracker/research/legal) — один профиль, один бот, один разговор. Причина
+# отказа от офиса — не техническая: сам формат "переписывайся с семью
+# личностями по отдельности" не подошёл пользователю на практике (см. живое
+# обсуждение в истории проекта). Специализация осталась, но внутри одного
+# агента — через delegation (fork/join сабагенты, см. ниже), а не через
+# отдельные Telegram-боты и Kanban-передачу.
+#
+# ПРОВАЙДЕР: OpenRouter (см. docs/phase-1-runbook.md, раздел "Провайдер").
+# Ключ — в .env как OPENROUTER_API_KEY, сюда пишется только выбор модели.
+# Настраивай мастером `hermes -p edith model`, не редактируй руками.
+#
+# ВАЖНО про геоблок: OpenRouter блокирует российские IP (403). Сервер должен
+# быть НЕ в РФ (у нас — Contabo EU).
+
+# ⚠️ ТАЙМЗОНА — ГДЕ МИХАИЛ ЖИВЁТ СЕЙЧАС, А НЕ КУДА СОБИРАЕТСЯ.
+# Михаил в Красноярске (UTC+7). Перехода на летнее время в России нет.
+# При переезде в Петербург (конец августа 2026) — сменить на Europe/Moscow
+# и ПЕРЕСОЗДАТЬ cron-задачи (у задачи хранится абсолютное время следующего
+# запуска, смена ключа сама по себе его не пересчитывает).
+timezone: Asia/Krasnoyarsk
+
+# Без этого Hermes оборачивает каждую cron-доставку в Telegram служебным
+# "Cronjob Response: <имя> (job_id: ...) ------- ...". Для утренней сводки —
+# просто шум поверх текста, уже отформатированного по MORNING.md.
+cron:
+  wrap_response: false
+
+model:
+  provider: openrouter
+  default: deepseek/deepseek-v4-flash   # дёшево ($0.10/$0.20 за 1M) + рабочий tool-calling
+  # запасная модель, если deepseek начнёт чудить: openai/gpt-5.4-mini (дороже, но предсказуемее в tool-calling и арифметике)
+
+agent:
+  disabled_toolsets:
+    - code_execution  # выполнение произвольного кода не нужно; включить, если арифметика по деньгам начнёт хромать
+    - browser         # тяжёлая браузерная автоматизация
+    - computer_use
+    - image_gen
+    - video
+    - video_gen
+    - x_search
+    # delegation НЕ выключена — это ключевое отличие от старых семи профилей.
+    # Раньше специализация шла через Kanban (адресная передача другому боту),
+    # теперь — anonymous fork/join сабагенты внутри ОДНОГО контекста EDITH
+    # (tools/delegate_tool.py: роли leaf/orchestrator, не именованные профили).
+    # Ими EDITH сама уходит вглубь узкой темы (право/учёба/ресёрч/трекинг
+    # проектов) и возвращается с ответом — Михаил этого не видит, для него
+    # это один голос.
+    # vision оставлена включённой — vault может содержать картинки/скриншоты,
+    # а Google-таблица финансов может потребовать распознать чек с фото.
+    # kanban и office НЕ подключены вовсе (см. toolsets/platform_toolsets
+    # ниже) — не нужны без множественных ботов.
+
+# Ручное подтверждение по-настоящему опасных команд (rm -rf, форк-бомбы и
+# т.п. из встроенного списка Hermes) — раз есть terminal (нужен для
+# Google Workspace скрипта, см. MCP-блок ниже).
+approvals:
+  mode: manual
+
+# --- MCP: filesystem + graphify (vault) и todoist (задачи) ---
+#
+# filesystem — официальный MCP-сервер (@modelcontextprotocol/server-filesystem),
+# read/write внутри vault, не всей ФС сервера. Подставь свой путь клона.
+#
+# graphify — граф знаний поверх vault, дешёвые структурные запросы вместо
+# перечитывания сырых файлов на каждый вопрос. Только чтение графа.
+# graph.json собирается один раз командой `graphify extract` и лежит внутри
+# клона vault, вне git. У Graphify нет подкоманды `serve` — единственный
+# подтверждённый способ запуска: `python -m graphify.serve <путь>`, через
+# `uv tool run --from graphifyy` (пакет ставится изолированно).
+mcp_servers:
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/michael/vault"]
+
+  graphify:
+    command: uv
+    args: ["tool", "run", "--from", "graphifyy", "python", "-m", "graphify.serve", "/home/michael/vault/graphify-out/graph.json"]
+
+  # Официальный сервер от Doist (@doist/todoist-mcp, npm), stdio-режим.
+  # Токен НЕ вписывать сюда — Hermes подставляет ${TODOIST_API_KEY} из .env.
+  todoist:
+    command: npx
+    args: ["-y", "@doist/todoist-mcp"]
+    env:
+      TODOIST_API_KEY: "${TODOIST_API_KEY}"
+    tools:
+      # Сервер отдаёт ~45 инструментов; оставляем только то, что реально
+      # нужно — каждая лишняя схема это токены в каждом ходу.
+      include:
+        - find-tasks
+        - find-tasks-by-date
+        - find-completed-tasks
+        - add-tasks
+        - update-tasks
+        - complete-tasks
+        - reschedule-tasks
+        - find-projects
+        - get-overview
+
+# --- Явный набор инструментов по площадкам ---
+# ДВА КЛЮЧА, НЕ ОДИН. Hermes резолвит инструменты по имени площадки:
+# platform_toolsets.get(platform) в hermes_cli/tools_config.py. `cli` —
+# терминальные сессии. `telegram` — сессии из личного чата с ботом EDITH.
+# Списки держим одинаковыми, чтобы агент был одним и тем же человеком
+# в чате и в CLI — на этом уже обжигались в старом офисе (разные наборы
+# толкали агента говорить "у меня нет такого инструмента" не по делу).
+#
+# terminal — нужен ради Google Workspace скрипта (`google_api.py`,
+# календарь+таблицы) — у bundled-скилла нет отдельного тула, все операции
+# идут через shell. Полноценный шелл, не ограниченный конкретными
+# командами — риск смягчён approvals.mode: manual выше.
+# НЕ ограничиваем terminal.cwd vault-директорией (как раньше делал brain):
+# EDITH нужен доступ и к vault, и к Google-скрипту вне vault. Сам доступ к
+# vault всё равно идёт через filesystem/graphify MCP выше, не через cwd.
+platform_toolsets:
+  cli:
+    - web
+    - file
+    - memory
+    - session_search
+    - skills
+    - todo
+    - cronjob
+    - clarify
+    - tts
+    - terminal
+    - vision
+  telegram:
+    - web
+    - file
+    - memory
+    - session_search
+    - skills
+    - todo
+    - cronjob
+    - clarify
+    - tts
+    - terminal
+    - vision

@@ -24,7 +24,7 @@ platforms: [linux, macos]
 
 2. **Создай новую ветку** с понятным именем (дата + короткая суть):
    ```bash
-   git checkout -b brain/2026-07-24-deadline-notes
+   git checkout -b edith/2026-07-24-deadline-notes
    ```
 
 3. **Внеси изменения** через `write_file`/`patch` (как учит скилл `obsidian`), работая **внутри** `$OBSIDIAN_VAULT_PATH`.
@@ -44,7 +44,7 @@ platforms: [linux, macos]
      https://api.github.com/repos/<owner>/<vault-repo>/pulls \
      -d '{
        "title": "Краткий заголовок PR",
-       "head": "brain/2026-07-24-deadline-notes",
+       "head": "edith/2026-07-24-deadline-notes",
        "base": "main",
        "body": "Что добавлено и почему. Коротко, по делу."
      }'
