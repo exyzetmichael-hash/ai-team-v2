@@ -17,7 +17,10 @@
 | Профиль | Роль | Статус |
 |---|---|---|
 | `edith` | время/календарь/Todoist, память (Obsidian vault), личные финансы + право/учёба/трекинг-проектов/ресёрч как внутренние умения | 🚧 строится |
-| `market` | маркетплейсер WB/Ozon — главный бизнес-приоритет, вне периметра EDITH | 📋 старт ~сентябрь |
+
+Маркетплейс WB/Ozon (главный бизнес-приоритет, ~сентябрь) — **не отдельный агент**, а
+инструменты Seller API + скилл внутри EDITH. Решения и проверенные факты:
+[`docs/marketplace-notes.md`](docs/marketplace-notes.md).
 
 ## Принципы
 
@@ -43,6 +46,7 @@
 | [`docs/roadmap.md`](docs/roadmap.md) | Цели, фазы, критерии готовности |
 | [`docs/phase-0-verification.md`](docs/phase-0-verification.md) | Что умеет Hermes — проверка по исходникам |
 | [`docs/phase-9-edith-runbook.md`](docs/phase-9-edith-runbook.md) | Развёртывание EDITH |
+| [`docs/marketplace-notes.md`](docs/marketplace-notes.md) | Маркетплейс WB/Ozon: архитектура, проверенный гео-доступ |
 | `docs/phase-N-runbook.md` (N < 9) | Архив: пошаговые инструкции первой версии (офис из семи ботов) |
 | [`profiles/README.md`](profiles/README.md) | Профиль EDITH, матрица доступов, история разворота |
 
