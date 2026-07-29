@@ -68,26 +68,21 @@
 — чтобы в группе было видно живую передачу работы: кто получил, от кого, что
 сделал.
 
-КУДА уходит отчёт (`_resolve_report_thread`). Не в свой топик, а в топик
-ТОГО, КТО ПРИСЛАЛ ЗАДАЧУ — то есть `created_by` карточки (профиль, вызвавший
-`kanban_create`, а не абстрактный «дежурный»). Первая версия слала в свой
-топик исполнителя: технически корректно, но бесполезно на практике — Михаил
-сидит в разговоре с заказчиком, а к исполнителю никогда не заходит напрямую,
-и узнавал результат только переспросив заказчика, который пересказывал
-своими словами. `created_by` читается прямым SQLite-запросом к `kanban.db`
-(путь — `HERMES_KANBAN_DB` в окружении воркера, инжектится диспетчером),
-топик заказчика — из `OFFICE_TOPIC_MAP` (JSON в `.env`, вся раскладка
-профиль→топик сразу, потому что заказчиком может быть любой из семи).
-Фолбэк на собственный топик — если задачу завёл сам исполнитель, заказчика
-не удалось определить, или его нет в карте (например, карточка заведена
-человеком напрямую через CLI).
+КУДА уходит отчёт. Всегда в СВОЙ топик исполнителя (`OFFICE_GROUP_THREAD_ID`
+профиля) — тем же ботом, который делал работу. Раньше был вариант с адресацией
+в топик того, кто прислал задачу (`created_by` карточки через `kanban.db`), но
+на живом прогоне выяснилось, что свой топик удобнее: у каждого агента
+предсказуемое место, где искать его результаты, а не гадать, кто у кого что
+спрашивал по цепочке передач. Топик — не аргумент инструмента и не решение
+модели, а константа окружения профиля, так что выбрать чужой топик нельзя ни
+модели, ни коду.
 
 СТРАХОВКА (`_track_kanban_completion` / `_maybe_auto_report`). На живом
 прогоне модель закрыла карточку (`kanban_complete`, внятный `summary`), но
 `office_report` так и не позвала — забыла финальный шаг в длинном прогоне с
 десятком инструментов. Инструкция в SOUL — не гарантия. Поэтому `post_tool_call`
 запоминает, что карточка закрыта и чем; `on_session_end`, если к концу турна
-отчёта так и не было, шлёт его сам из `summary`, в тот же топик заказчика.
+отчёта так и не было, шлёт его сам из `summary`, в тот же свой топик.
 Текст суше, чем у модели, но он ГАРАНТИРОВАН — тишина в топике хуже сухого
 автотекста.
 
@@ -646,91 +641,13 @@ OFFICE_REPORT_SCHEMA = {
 }
 
 
-def _kanban_db_path() -> Optional[Path]:
-    """Путь к kanban.db воркера — инжектится диспетчером в HERMES_KANBAN_DB."""
-    raw = os.environ.get("HERMES_KANBAN_DB", "").strip()
-    return Path(raw) if raw else None
-
-
-def _task_creator(task_id: str) -> Optional[str]:
-    """Кто вызвал ``kanban_create`` для этой карточки — тот и заказчик отчёта.
-
-    ``created_by`` в таблице ``tasks`` пишется как раз этим профилем
-    (``os.environ.get("HERMES_PROFILE")`` в ``tools/kanban_tools.py``, там
-    же, где заводится карточка) — то есть это тот, кто РЕАЛЬНО делегировал
-    задачу, а не абстрактный «дежурный». Открываем базу в режиме только для
-    чтения (``mode=ro``) — воркер не должен ничего в ней менять, только читать.
-    """
-    db_path = _kanban_db_path()
-    if not db_path or not task_id:
-        return None
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=3.0)
-        try:
-            row = conn.execute(
-                "SELECT created_by FROM tasks WHERE id = ?", (task_id,)
-            ).fetchone()
-        finally:
-            conn.close()
-    except Exception as exc:
-        logger.debug("office-gate: could not read task creator for %s: %s", task_id, exc)
-        return None
-    return str(row[0]) if row and row[0] else None
-
-
-def _topic_map() -> dict[str, str]:
-    """{профиль: id топика} — та же раскладка, что и в `scripts/setup-office-env.sh`.
-
-    Задаётся один раз через `OFFICE_TOPIC_MAP` (JSON) в `.env` каждого
-    профиля — нужна ВСЯ карта, не только свой топик, потому что отчёт может
-    понадобиться отправить в топик ЛЮБОГО коллеги, который выступил заказчиком.
-    """
-    raw = os.environ.get("OFFICE_TOPIC_MAP", "").strip()
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-        if isinstance(data, dict):
-            return {str(k): str(v) for k, v in data.items()}
-    except Exception as exc:
-        logger.warning("office-gate: bad OFFICE_TOPIC_MAP (%s)", exc)
-    return {}
-
-
-def _resolve_report_thread(task_id: str) -> Optional[str]:
-    """В какой топик слать отчёт: топик того, кто прислал задачу.
-
-    Раньше отчёт всегда уходил в СВОЙ топик исполнителя — но Михаил обычно
-    сидит в топике того, у кого спрашивал, а не у исполнителя, которого
-    никогда напрямую не звал. Он получал ответ только если сам догадывался
-    зайти к исполнителю или переспрашивал у заказчика, который пересказывал
-    своими словами. Теперь адресуем туда, где Михаил реально ждёт ответ.
-    """
-    creator = _task_creator(task_id) if task_id else None
-    me = _profile_name()
-    if creator and creator != me:
-        topic = _topic_map().get(creator)
-        if topic:
-            return topic
-    # Фолбэк — свой топик: task_id пуст, карточку завёл сам исполнитель,
-    # создатель не в карте (например, задачу завёл человек через голый CLI).
-    return os.environ.get("OFFICE_GROUP_THREAD_ID", "").strip() or None
-
-
-def _send_to_office(text: str, thread_id: Optional[str] = None) -> str:
-    """Отправить текст ботом ЭТОГО профиля в топик того, кто прислал задачу.
+def _send_to_office(text: str) -> str:
+    """Отправить текст ботом ЭТОГО профиля в его собственный топик.
 
     Общий низкоуровневый отправитель — используется и инструментом
     `office_report` (модель зовёт сама), и страховкой в `_maybe_auto_report`
-    (плагин зовёт сам, если модель забыла). `thread_id`, если передан, всегда
-    побеждает — резолвится заранее, через `_resolve_report_thread()`, а не
-    внутри этой функции: адрес выбирает КОД (по `created_by` задачи), не
-    модель и не аргумент инструмента.
-
-    Если резолвнуть не удалось (нет активной карточки, создатель неизвестен,
-    его нет в карте топиков) — падаем на собственный топик профиля
-    (`OFFICE_GROUP_THREAD_ID`), чтобы отчёт всё равно куда-то дошёл, а не
-    потерялся молча.
+    (плагин зовёт сам, если модель забыла). Топик — не аргумент и не решение
+    модели, а константа окружения профиля (`OFFICE_GROUP_THREAD_ID`).
     """
     text = (text or "").strip()
     if not text:
@@ -746,9 +663,9 @@ def _send_to_office(text: str, thread_id: Optional[str] = None) -> str:
         return "Ошибка: OFFICE_GROUP_CHAT_ID не задан в профиле."
 
     payload: dict = {"chat_id": chat_id, "text": text[:4000]}
-    thread = thread_id if thread_id is not None else os.environ.get("OFFICE_GROUP_THREAD_ID", "").strip()
+    thread = os.environ.get("OFFICE_GROUP_THREAD_ID", "").strip()
     if thread:
-        payload["message_thread_id"] = int(thread) if str(thread).isdigit() else thread
+        payload["message_thread_id"] = int(thread) if thread.isdigit() else thread
 
     try:
         resp = httpx.post(_TELEGRAM_API.format(token=token), json=payload, timeout=15.0)
@@ -776,11 +693,8 @@ def office_report(args: dict, **kwargs) -> str:
     Обсуждение при этом идёт в любом топике как обычно: на реплики Михаила
     агент отвечает штатным путём gateway, туда же, где его спросили, — этот
     инструмент к разговору отношения не имеет, только к отчёту по карточке.
-
-    Топик — не свой, а того, кто прислал задачу (`_resolve_report_thread`):
-    Михаил сидит в разговоре с заказчиком, а не с исполнителем, которого
-    никогда напрямую не звал, — раньше ответ уходил туда, где его никто не
-    ждал, и Михаил узнавал результат, только переспросив заказчика напрямую.
+    Отчёт всегда уходит в СВОЙ топик исполнителя (`OFFICE_GROUP_THREAD_ID`)
+    — предсказуемое место для результатов конкретного агента.
 
     Факт вызова фиксирует не эта функция, а хук `post_tool_call`
     (`_track_kanban_completion` ниже) — он получает надёжный `task_id` от
@@ -788,9 +702,7 @@ def office_report(args: dict, **kwargs) -> str:
     только если этот вызов реально отправил сообщение, а не просто произошёл.
     """
     text = str((args or {}).get("text") or "")
-    task_id = os.environ.get("HERMES_KANBAN_TASK", "").strip()
-    thread_id = _resolve_report_thread(task_id) if task_id else None
-    return _send_to_office(text, thread_id=thread_id)
+    return _send_to_office(text)
 
 
 # ---------------------------------------------------------------------------
@@ -882,8 +794,7 @@ def _maybe_auto_report(session_id: str = "", task_id: str = "", **kwargs) -> Non
         return
     completed_task_id, text = completion
     logger.info("office-gate: office_report was not called for %s, sending fallback", completed_task_id)
-    thread_id = _resolve_report_thread(completed_task_id) if completed_task_id != "?" else None
-    _send_to_office(f"🔧 Автоотчёт (не написал сам): {text}", thread_id=thread_id)
+    _send_to_office(f"🔧 Автоотчёт (не написал сам): {text}")
 
 
 def register(ctx) -> None:
