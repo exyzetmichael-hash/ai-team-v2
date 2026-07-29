@@ -53,6 +53,14 @@
 `office_report`, который шлёт сообщение в офисный чат ботом САМОГО исполнителя
 — чтобы в группе было видно живую передачу работы: кто получил, от кого, что
 сделал.
+
+СТРАХОВКА (`_track_kanban_completion` / `_maybe_auto_report`). На живом
+прогоне модель закрыла карточку (`kanban_complete`, внятный `summary`), но
+`office_report` так и не позвала — забыла финальный шаг в длинном прогоне с
+десятком инструментов. Инструкция в SOUL — не гарантия. Поэтому `post_tool_call`
+запоминает, что карточка закрыта и чем; `on_session_end`, если к концу турна
+отчёта так и не было, шлёт его сам из `summary`. Текст суше, чем у модели, но
+он ГАРАНТИРОВАН — тишина в топике хуже сухого автотекста.
 """
 from __future__ import annotations
 
@@ -243,7 +251,20 @@ def _routing_db_path() -> Path:
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(_routing_db_path()), timeout=5.0)
-    conn.execute("PRAGMA journal_mode=WAL")
+    # Первое переключение в WAL на ещё не созданном файле — это отдельная
+    # эксклюзивная операция, которую python-уровневый `timeout=` не всегда
+    # успевает отретраить: семь процессов, стартующих в одну секунду, могут
+    # словить "database is locked" именно на этой строке (поймано тестом на
+    # гонке). CREATE TABLE IF NOT EXISTS идемпотентен, поэтому ретраим весь
+    # блок инициализации целиком, а не гадаем, что конкретно не успело.
+    for attempt in range(10):
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            break
+        except sqlite3.OperationalError:
+            if attempt == 9:
+                raise
+            time.sleep(0.05 * (attempt + 1))
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute(
         """
@@ -496,15 +517,15 @@ OFFICE_REPORT_SCHEMA = {
 }
 
 
-def office_report(text: str = "", **kwargs) -> str:
-    """Отправить отчёт в СВОЙ топик офисного чата ботом ЭТОГО профиля.
+def _send_to_office(text: str) -> str:
+    """Отправить текст в свой топик офисного чата ботом ЭТОГО профиля.
 
-    Адрес жёстко задан окружением профиля (`OFFICE_GROUP_CHAT_ID` +
-    `OFFICE_GROUP_THREAD_ID`) и не является аргументом: «отчёт всегда в свой
-    топик и только в него» — свойство конструкции, а не инструкция модели,
-    которую та может забыть. Обсуждение при этом идёт в любом топике как
-    обычно: на реплики Михаила агент отвечает штатным путём gateway, туда же,
-    где его спросили, — этот инструмент к разговору отношения не имеет.
+    Общий низкоуровневый отправитель — используется и инструментом
+    `office_report` (модель зовёт сама), и страховкой в `_maybe_auto_report`
+    (плагин зовёт сам, если модель забыла). Адрес жёстко задан окружением
+    профиля (`OFFICE_GROUP_CHAT_ID` + `OFFICE_GROUP_THREAD_ID`), выбрать
+    другой адрес нельзя ни модели, ни коду — «только в свой топик» гарантирует
+    сама эта функция, а не то, кто её вызвал.
     """
     text = (text or "").strip()
     if not text:
@@ -529,12 +550,110 @@ def office_report(text: str = "", **kwargs) -> str:
         resp.raise_for_status()
         return "Отправлено в общий чат."
     except Exception as exc:
-        logger.warning("office-gate: office_report failed: %s", exc)
+        logger.warning("office-gate: send to office chat failed: %s", exc)
         return f"Не удалось отправить в общий чат: {exc}"
+
+
+def office_report(text: str = "", **kwargs) -> str:
+    """Отчитаться о карточке своими словами — вызывает модель.
+
+    Обсуждение при этом идёт в любом топике как обычно: на реплики Михаила
+    агент отвечает штатным путём gateway, туда же, где его спросили, — этот
+    инструмент к разговору отношения не имеет, только к отчёту по карточке.
+
+    Факт вызова фиксирует не эта функция, а хук `post_tool_call`
+    (`_track_kanban_completion` ниже, ветка `tool_name == "office_report"`)
+    — он получает надёжный `task_id` от самого Hermes, а не то, что модель
+    случайно передаст сюда через `**kwargs` инструмента.
+    """
+    return _send_to_office(text)
+
+
+# ---------------------------------------------------------------------------
+# Страховка: если карточка закрыта, а office_report модель не позвала
+# ---------------------------------------------------------------------------
+#
+# ЗАЧЕМ. На живом прогоне ресёрчер честно закрыл карточку (10 сайтов, 224
+# секунды инструментов, внятный summary в комментарии) — и ни разу не позвал
+# office_report. Инструкция в SOUL это не гарантия: модель может забыть
+# финальный шаг в длинном прогоне. Полагаться на память модели там, где
+# нужна гарантия доставки, — не вариант, поэтому страховка сделана кодом:
+# если к концу сессии карточка закрыта, а отчёт не ушёл, плагин шлёт его сам
+# из `summary`, который агент и так обязан написать в `kanban_complete`.
+#
+# Автоматический текст хуже, чем человеческая формулировка модели (нет
+# «от кого и почему»), но он ГАРАНТИРОВАН — а тишина в топике хуже сухого
+# автотекста.
+
+_session_reports: dict[str, bool] = {}
+_session_completions: dict[str, tuple[str, str]] = {}  # session_key -> (task_id, summary)
+
+_COMPLETION_TOOLS = {"kanban_complete", "kanban_block"}
+
+
+def _session_key(*, task_id: str = "", session_id: str = "") -> str:
+    """Один и тот же приоритет ключа в обоих хуках, иначе они не встретятся.
+
+    `on_session_end` и `post_tool_call` оба получают И `task_id`, И
+    `session_id` (см. `agent/turn_finalizer.py` — оба передаются из одних и
+    тех же переменных турна), но какой из них непустой в конкретном
+    контексте — не гарантировано. Если бы одна функция ключевалась по
+    `task_id`, а другая по `session_id`, при расхождении страховка молчала бы
+    вхолостую, и обнаружить это можно было бы только на живом прогоне.
+    """
+    return str(task_id or session_id or "_default")
+
+
+def _track_kanban_completion(
+    tool_name: str, args: dict, result: str, task_id: str = "", session_id: str = "", **kwargs
+) -> None:
+    session_key = _session_key(task_id=task_id, session_id=session_id)
+    if tool_name == "office_report":
+        with _lock:
+            _session_reports[session_key] = True
+        return
+    if tool_name not in _COMPLETION_TOOLS:
+        return
+    # Успешный вызов возвращает JSON без "error" на верхнем уровне; при
+    # ошибке (например невалидный task_id) отчёт слать не о чем.
+    try:
+        parsed = json.loads(result) if isinstance(result, str) else {}
+    except Exception:
+        parsed = {}
+    if isinstance(parsed, dict) and parsed.get("error"):
+        return
+
+    kanban_task_id = (
+        args.get("task_id")
+        or os.environ.get("HERMES_KANBAN_TASK", "")
+        or task_id
+        or "?"
+    )
+    summary = str(args.get("summary") or args.get("result") or "").strip()
+    verb = "закрыта" if tool_name == "kanban_complete" else "заблокирована"
+    text = f"Карточка {kanban_task_id} {verb}."
+    if summary:
+        text += f" {summary}"
+    with _lock:
+        _session_completions[session_key] = (kanban_task_id, text)
+
+
+def _maybe_auto_report(session_id: str = "", task_id: str = "", **kwargs) -> None:
+    session_key = _session_key(task_id=task_id, session_id=session_id)
+    with _lock:
+        completion = _session_completions.pop(session_key, None)
+        already_reported = _session_reports.pop(session_key, False)
+    if not completion or already_reported:
+        return
+    _task_id, text = completion
+    logger.info("office-gate: office_report was not called for %s, sending fallback", _task_id)
+    _send_to_office(f"🔧 Автоотчёт (не написал сам): {text}")
 
 
 def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", office_gate)
+    ctx.register_hook("post_tool_call", _track_kanban_completion)
+    ctx.register_hook("on_session_end", _maybe_auto_report)
     try:
         ctx.register_tool(
             name="office_report",

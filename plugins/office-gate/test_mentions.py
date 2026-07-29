@@ -180,6 +180,63 @@ with tempfile.TemporaryDirectory() as tmp:
     )
 
 # ---------------------------------------------------------------------------
+# 6. Страховка: office_report забыт — плагин шлёт отчёт сам из summary
+# ---------------------------------------------------------------------------
+
+sent: list[str] = []
+og._send_to_office = lambda text: sent.append(text) or "ok"  # type: ignore[assignment]
+
+# Карточка закрыта, office_report НЕ вызывался -> страховка обязана сработать.
+og._track_kanban_completion(
+    tool_name="kanban_complete",
+    args={"task_id": "t_abc123", "summary": "Нашёл цену, ссылка в комментарии."},
+    result='{"ok": true}',
+    task_id="sess-1",
+)
+og._maybe_auto_report(session_id="sess-1", task_id="")
+check("[страховка] сработала при забытом office_report", len(sent), 1)
+if sent:
+    check("[страховка] текст содержит summary", "Нашёл цену" in sent[0], True)
+    check("[страховка] помечен как автоотчёт", sent[0].startswith("🔧 Автоотчёт"), True)
+
+# Карточка закрыта, office_report ПОЗВАН -> страховка не должна дублировать.
+sent.clear()
+og._track_kanban_completion(
+    tool_name="kanban_complete",
+    args={"task_id": "t_def456", "summary": "Готово."},
+    result='{"ok": true}',
+    task_id="sess-2",
+)
+og._track_kanban_completion(
+    tool_name="office_report", args={"text": "своими словами"}, result="ok", task_id="sess-2",
+)
+og._maybe_auto_report(session_id="sess-2", task_id="")
+check("[страховка] не дублирует, если модель отчиталась сама", len(sent), 0)
+
+# Ошибка в kanban_complete (невалидный task_id и т.п.) -> отчитывать нечего.
+sent.clear()
+og._track_kanban_completion(
+    tool_name="kanban_complete",
+    args={"summary": "не должно быть отправлено"},
+    result='{"error": "unknown task_id"}',
+    task_id="sess-3",
+)
+og._maybe_auto_report(session_id="sess-3", task_id="")
+check("[страховка] не шлёт отчёт при ошибке kanban_complete", len(sent), 0)
+
+# session_id и task_id разошлись между хуками -> ключ должен совпасть всё равно.
+sent.clear()
+og._track_kanban_completion(
+    tool_name="kanban_complete",
+    args={"summary": "ключ по task_id"},
+    result="{}",
+    task_id="t_shared",
+    session_id="",
+)
+og._maybe_auto_report(session_id="", task_id="t_shared")
+check("[страховка] ключ совпадает при task_id из обоих хуков", len(sent), 1)
+
+# ---------------------------------------------------------------------------
 
 if failures:
     print(f"ПРОВАЛЕНО — {len(failures)} проверок:\n")
