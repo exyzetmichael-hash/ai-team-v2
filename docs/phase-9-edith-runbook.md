@@ -92,6 +92,9 @@ hermes -p edith
 
 ## 5. Google Workspace — Calendar И Sheets (важно: новый scope)
 
+✅ Готово. OAuth-клиент создан заново (старый JSON был потерян), авторизован с
+`--services calendar,sheets`.
+
 У Hermes есть bundled-скилл `productivity/google-workspace` (Calendar, Sheets и т.д. через
 OAuth, полностью диалоговая настройка — см. `docs/phase-2-runbook.md`, раздел 2, если нужны
 детали механики). **У старого секретаря OAuth был авторизован только `--services calendar`
