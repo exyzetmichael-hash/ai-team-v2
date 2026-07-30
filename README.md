@@ -47,6 +47,7 @@
 | [`docs/phase-0-verification.md`](docs/phase-0-verification.md) | Что умеет Hermes — проверка по исходникам |
 | [`docs/phase-9-edith-runbook.md`](docs/phase-9-edith-runbook.md) | Развёртывание EDITH |
 | [`docs/marketplace-notes.md`](docs/marketplace-notes.md) | Маркетплейс WB/Ozon: архитектура, проверенный гео-доступ |
+| [`docs/finance-sheet-spec.md`](docs/finance-sheet-spec.md) | Структура финансовой Google-таблицы (7 листов, графики, цели, бюджеты) |
 | `docs/phase-N-runbook.md` (N < 9) | Архив: пошаговые инструкции первой версии (офис из семи ботов) |
 | [`profiles/README.md`](profiles/README.md) | Профиль EDITH, матрица доступов, история разворота |
 
