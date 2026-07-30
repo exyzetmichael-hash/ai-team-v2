@@ -27,6 +27,15 @@ Google-таблица финансов.
 
 ✅ Заведён: **`@edith_aiassist_bot`**.
 
+⚠️ **Живой баг, уже исправлен (bf5c1aa):** первый запуск показал `kanban` в «Available
+Tools», хотя офис снесён. Причина — `agent.disabled_toolsets` в профиле полностью заменяет
+машинный список (36 пунктов), а не дополняет его; в `edith/config.yaml` было явно перечислено
+только 7. Список исправлен на полный (добавлены `kanban`, `discord*`, `feishu*`,
+`homeassistant`, `spotify`, `yuanbao`, `project`, `search`, `context_engine`). Если разводишь
+EDITH заново — просто `git pull`, баг уже не воспроизведётся. Подтверждено на живом запуске:
+`hermes -p edith config get agent.disabled_toolsets --json` резолвится в полный список, и
+`kanban` из баннера «Available Tools» пропал.
+
 Свой Telegram user id (для allowlist) — у @userinfobot, тот же, что был у старых профилей.
 
 ## 2. Создать профиль и залить файлы
