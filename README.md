@@ -45,7 +45,8 @@
 | [`docs/project-overview.md`](docs/project-overview.md) | Техническое описание целиком |
 | [`docs/roadmap.md`](docs/roadmap.md) | Цели, фазы, критерии готовности |
 | [`docs/phase-0-verification.md`](docs/phase-0-verification.md) | Что умеет Hermes — проверка по исходникам |
-| [`docs/phase-9-edith-runbook.md`](docs/phase-9-edith-runbook.md) | Развёртывание EDITH |
+| [`docs/edith.md`](docs/edith.md) | **EDITH полностью** — кто это, что умеет, статус, решения, история |
+| [`docs/phase-9-edith-runbook.md`](docs/phase-9-edith-runbook.md) | Развёртывание EDITH, шаг за шагом |
 | [`docs/marketplace-notes.md`](docs/marketplace-notes.md) | Маркетплейс WB/Ozon: архитектура, проверенный гео-доступ |
 | [`docs/finance-sheet-spec.md`](docs/finance-sheet-spec.md) | Структура финансовой Google-таблицы (7 листов, графики, цели, бюджеты) |
 | `docs/phase-N-runbook.md` (N < 9) | Архив: пошаговые инструкции первой версии (офис из семи ботов) |
