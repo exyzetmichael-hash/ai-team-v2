@@ -52,6 +52,13 @@ stt:
   enabled: true
   provider: groq
 
+# По умолчанию гейтвей отдельным сообщением "🎙️ ..." эхом присылает сырую
+# расшифровку ДО ответа модели (gateway/run.py: _should_echo_stt_transcripts).
+# Живьём проверено на первом голосовом — лишний шум, EDITH и так пересказывает
+# суть в самом ответе. Ключ верхнеуровневый, не под stt: (gateway/config.py
+# читает его как top-level или из gateway:, отдельного узла под stt: нет).
+stt_echo_transcripts: false
+
 agent:
   # ⚠️ Этот список ЗАМЕНЯЕТ машинный disabled_toolsets целиком, а не
   # дополняет его — `platform_toolsets` ниже НЕ является allowlist'ом и не
