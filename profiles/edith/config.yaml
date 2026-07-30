@@ -158,6 +158,19 @@ mcp_servers:
 # НЕ ограничиваем terminal.cwd vault-директорией (как раньше делал brain):
 # EDITH нужен доступ и к vault, и к Google-скрипту вне vault. Сам доступ к
 # vault всё равно идёт через filesystem/graphify MCP выше, не через cwd.
+#
+# ⚠️ `delegation` ОБЯЗАТЕЛЕН и его легко потерять. Когда в этих списках
+# перечислены конкретные тулсеты (а не композит вроде `hermes-cli`), Hermes
+# считает конфиг явным и включает СТРОГО перечисленное
+# (hermes_cli/tools_config.py: has_explicit_config → прямое членство).
+# Не указан `delegation` — нет инструмента `delegate_task`, а на нём стоит
+# и вся внутренняя специализация EDITH (право/учёба/ресёрч), и скилл
+# `research` целиком. Поймано при разборе скилла research: конфиг выглядел
+# рабочим, но сабагентов физически не существовало.
+# Сабагенты наследуют инструменты родителя минус блок-лист
+# (tools/delegate_tool.py: delegate_task/clarify/memory/send_message/cronjob),
+# поэтому `web` в этом списке нужен ещё и им — без него сабагент не может
+# ни искать, ни читать страницы.
 platform_toolsets:
   cli:
     - web
@@ -171,6 +184,7 @@ platform_toolsets:
     - tts
     - terminal
     - vision
+    - delegation
   telegram:
     - web
     - file
@@ -183,3 +197,4 @@ platform_toolsets:
     - tts
     - terminal
     - vision
+    - delegation
