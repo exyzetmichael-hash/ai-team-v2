@@ -15,14 +15,27 @@ issue #21587 («No urgency — documenting for roadmap awareness»), разра�
 бот УЖЕ состоит участником. Гостевые упоминания из ЛЮБОГО чата, даже без
 членства бота, — то, что реализует именно этот мост.
 
+⚠️ ОТДЕЛЬНЫЙ БОТ, НЕ ТОКЕН EDITH. Первая версия этого файла читала тот же
+TELEGRAM_BOT_TOKEN, что и сам гейтвей EDITH — это сломано в принципе:
+Telegram разрешает только ОДНО активное подключение getUpdates на токен
+бота одновременно (проверено вживую — 409 Conflict сразу же при запуске
+рядом с работающим гейтвеем). Independent от allowed_updates, это лимит
+на уровне соединения, а не типа апдейта. Хуже: конкурирующий поллинг с тем
+же токеном подтверждённо может довести retry-логику самого гейтвея Hermes
+(adapter.py, MAX_CONFLICT_RETRIES) до fatal-обрыва основного бота. Поэтому
+этот мост работает под ОТДЕЛЬНЫМ ботом (свой токен GUEST_BOT_TOKEN,
+заведённый через @BotFather с тем же именем/аватаркой, что и у EDITH, но
+другим юзернеймом) — у него собственный, ни с кем не разделяемый слот
+getUpdates. Упоминать в чате нужно именно этот второй юзернейм.
+
 АРХИТЕКТУРА:
-  Telegram guest_message
-    --(getUpdates, этот процесс, отдельный от гейтвея EDITH)-->
+  Telegram guest_message (на боте-двойнике, GUEST_BOT_TOKEN)
+    --(getUpdates, этот процесс, полностью отдельный токен от гейтвея EDITH)-->
   EDITH через её собственный /v1/chat/completions
-    (тот же самый systemd-сервис hermes-gateway-edith, платформа api_server,
+    (systemd-сервис hermes-gateway-edith, платформа api_server,
     порт по умолчанию 8642, локально — см. config.yaml)
     --(текст ответа)-->
-  answerGuestQuery
+  answerGuestQuery (тем же ботом-двойником, GUEST_BOT_TOKEN)
     --> Telegram --> пользователь, который упомянул бота.
 
 ⚠️⚠️ БЕЗОПАСНОСТЬ — САМОЕ ВАЖНОЕ В ЭТОМ ФАЙЛЕ. guest_message приходит от
@@ -80,7 +93,7 @@ def _env(name: str, *, required: bool = True, default: str = "") -> str:
     return value
 
 
-BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = _env("GUEST_BOT_TOKEN")
 API_SERVER_KEY = _env("API_SERVER_KEY")
 API_SERVER_PORT = _env("API_SERVER_PORT", required=False, default="8642")
 API_SERVER_URL = f"http://127.0.0.1:{API_SERVER_PORT}/v1/chat/completions"
