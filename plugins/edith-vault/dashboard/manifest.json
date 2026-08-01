@@ -1,0 +1,14 @@
+{
+  "name": "edith-vault",
+  "label": "Vault",
+  "description": "Просмотр Obsidian vault EDITH — заметки и граф связей (read-only)",
+  "icon": "FileText",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/vault",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
