@@ -65,7 +65,8 @@ EDITH, но другим юзернеймом — свой токен, свой 
 Hermes (`TELEGRAM_ALLOWED_USERS`), потому что мост говорит с Telegram напрямую,
 а не через адаптер Hermes, где та проверка встроена. `guest_bridge.py`
 реализует эту проверку заново (та же переменная `TELEGRAM_ALLOWED_USERS`,
-поле `guest_bot_caller_user.id` из ответа Telegram) — без неё EDITH отвечала бы
+поле `from.id` внутри `guest_message`, живьём проверенная форма — см.
+докстринг `guest_bridge.py`) — без неё EDITH отвечала бы
 незнакомцам, тратя чужую (твою) квоту OpenRouter и раскрывая контекст личного
 ассистента. Не убирать эту проверку и не оставлять `TELEGRAM_ALLOWED_USERS`
 пустым.

@@ -48,17 +48,24 @@ TELEGRAM_ALLOWED_USERS) — единственное, что не даёт EDITH
 незнакомцам чужими деньгами (квота OpenRouter Михаила) и её личным
 контекстом. НЕ УДАЛЯТЬ и не делать опциональной.
 
-⚠️ ТОЧНЫЙ ФОРМАТ answerGuestQuery ПОДТВЕРЖДЁН НЕ ДО КОНЦА. Update.guest_message,
-Message.guest_query_id, Message.guest_bot_caller_user/chat — сверены с
-первоисточником (core.telegram.org/bots/api, вставлено пользователем в чат
-2026-07-31, раздел Bot API 10.0 changelog + Update/Message). А вот раздел
-Methods с точной сигнатурой answerGuestQuery не был под рукой — известно
-из вторичных источников только «guest_query_id (str) + result
-(types.InlineQueryResult)», без полной спецификации. Ниже собран
-разумный InlineQueryResultArticle. Если первый живой вызов упадёт —
-проверить точную сигнатуру на core.telegram.org/bots/api (у самого агента
-он отдаёт 403 из песочницы, открывать нужно из обычного браузера) и
-поправить только _answer_guest_query — остальной файл трогать не нужно.
+⚠️ РЕАЛЬНАЯ ФОРМА guest_message (живой прогон 2026-08-01, группа, не личка):
+{"message_id", "from": {id, is_bot, first_name, username, language_code},
+"chat": {id, title, type, all_members_are_administrators}, "date",
+"guest_query_id", "text", "entities"}. НЕТ guest_bot_caller_user/chat, как
+предполагалось по одному только changelog'у Bot API 10.0 — отправитель и
+чат лежат в обычных "from"/"chat", ровно как в стандартном Message. Урок:
+поле guest_query_id совпало с предположением, а вложенные caller-объекты —
+нет; предположения по changelog без раздела Methods подтверждаются только
+живым прогоном.
+
+⚠️ ТОЧНЫЙ ФОРМАТ answerGuestQuery ВСЁ ЕЩЁ ПОДТВЕРЖДЁН НЕ ДО КОНЦА — раздел
+Methods с точной сигнатурой не был под рукой при разборе. Известно из
+вторичных источников только «guest_query_id (str) + result
+(types.InlineQueryResult)». Ниже собран разумный InlineQueryResultArticle.
+Если живой вызов упадёт — проверить точную сигнатуру на
+core.telegram.org/bots/api (у самого агента он отдаёт 403 из песочницы,
+открывать нужно из обычного браузера) и поправить только
+_answer_guest_query — остальной файл трогать не нужно.
 
 ЗАПУСК: отдельный systemd-юнит (hermes-guest-bridge.service, см. рядом в
 этой же папке), НЕ часть gateway-сервиса EDITH — если этот скрипт упадёт,
@@ -192,15 +199,32 @@ def _handle_guest_message(update: dict[str, Any], client: httpx.Client) -> None:
     if not guest_msg:
         return
 
-    # Точная структура guest_message не подтверждена по разделу Methods —
-    # логируем сырой апдейт целиком, пока не убедимся, что поля ниже (в
-    # частности guest_bot_caller_user) читаются верно. Убрать после первого
-    # успешного end-to-end прогона с непустым caller_id.
+    # Живой прогон 2026-08-01 показал реальную форму: НЕТ отдельных полей
+    # guest_bot_caller_user/guest_bot_caller_chat, как предполагалось по
+    # changelog'у — guest_message несёт обычные "from" и "chat", ровно как
+    # стандартный Message. Оставляем RAW-лог: answerGuestQuery ещё не
+    # подтверждён, может понадобиться для следующей правки.
     logger.info("RAW guest_message: %s", json.dumps(update, ensure_ascii=False))
 
-    text = (guest_msg.get("text") or "").strip()
+    raw_text = guest_msg.get("text") or ""
+    entities = guest_msg.get("entities") or []
+    # Упоминание бота ("@юзернейм") — часть текста по entity type=mention,
+    # для EDITH это шум, не часть самого запроса. Вырезаем именно entity-диапазон,
+    # а не строкой by convention, чтобы не сломаться на mention не в начале текста.
+    mention_spans = [
+        (e["offset"], e["offset"] + e["length"])
+        for e in entities
+        if e.get("type") == "mention"
+    ]
+    if mention_spans:
+        chars = list(raw_text)
+        for start, end in sorted(mention_spans, reverse=True):
+            del chars[start:end]
+        raw_text = "".join(chars)
+    text = raw_text.strip()
+
     guest_query_id = guest_msg.get("guest_query_id", "")
-    caller = guest_msg.get("guest_bot_caller_user") or {}
+    caller = guest_msg.get("from") or {}
     caller_id = str(caller.get("id", ""))
     caller_name = caller.get("username") or caller.get("first_name") or caller_id
 
