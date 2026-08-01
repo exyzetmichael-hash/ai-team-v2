@@ -58,14 +58,10 @@ TELEGRAM_ALLOWED_USERS) — единственное, что не даёт EDITH
 нет; предположения по changelog без раздела Methods подтверждаются только
 живым прогоном.
 
-⚠️ ТОЧНЫЙ ФОРМАТ answerGuestQuery ВСЁ ЕЩЁ ПОДТВЕРЖДЁН НЕ ДО КОНЦА — раздел
-Methods с точной сигнатурой не был под рукой при разборе. Известно из
-вторичных источников только «guest_query_id (str) + result
-(types.InlineQueryResult)». Ниже собран разумный InlineQueryResultArticle.
-Если живой вызов упадёт — проверить точную сигнатуру на
-core.telegram.org/bots/api (у самого агента он отдаёт 403 из песочницы,
-открывать нужно из обычного браузера) и поправить только
-_answer_guest_query — остальной файл трогать не нужно.
+✅ answerGuestQuery ПОДТВЕРЖДЁН ЖИВЬЁМ (2026-08-01, группа "а", @yux_28):
+InlineQueryResultArticle-форма ниже принята Telegram с ok=true с первой
+попытки, ответ дошёл до отправителя. Полный цикл (guest_message → EDITH →
+answerGuestQuery → доставка) пройден end-to-end.
 
 ЗАПУСК: отдельный systemd-юнит (hermes-guest-bridge.service, см. рядом в
 этой же папке), НЕ часть gateway-сервиса EDITH — если этот скрипт упадёт,
@@ -74,7 +70,6 @@ _answer_guest_query — остальной файл трогать не нужн
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -198,13 +193,6 @@ def _handle_guest_message(update: dict[str, Any], client: httpx.Client) -> None:
     guest_msg = update.get("guest_message")
     if not guest_msg:
         return
-
-    # Живой прогон 2026-08-01 показал реальную форму: НЕТ отдельных полей
-    # guest_bot_caller_user/guest_bot_caller_chat, как предполагалось по
-    # changelog'у — guest_message несёт обычные "from" и "chat", ровно как
-    # стандартный Message. Оставляем RAW-лог: answerGuestQuery ещё не
-    # подтверждён, может понадобиться для следующей правки.
-    logger.info("RAW guest_message: %s", json.dumps(update, ensure_ascii=False))
 
     raw_text = guest_msg.get("text") or ""
     entities = guest_msg.get("entities") or []
