@@ -67,6 +67,7 @@ Methods с точной сигнатурой answerGuestQuery не был под
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -190,6 +191,12 @@ def _handle_guest_message(update: dict[str, Any], client: httpx.Client) -> None:
     guest_msg = update.get("guest_message")
     if not guest_msg:
         return
+
+    # Точная структура guest_message не подтверждена по разделу Methods —
+    # логируем сырой апдейт целиком, пока не убедимся, что поля ниже (в
+    # частности guest_bot_caller_user) читаются верно. Убрать после первого
+    # успешного end-to-end прогона с непустым caller_id.
+    logger.info("RAW guest_message: %s", json.dumps(update, ensure_ascii=False))
 
     text = (guest_msg.get("text") or "").strip()
     guest_query_id = guest_msg.get("guest_query_id", "")
