@@ -48,6 +48,16 @@ IIFE), `dist/style.css`.
 
 ## Деплой
 
+⚠️ **История (2026-08-01):** на сервере дашборд уже был поднят вручную
+29 июля — фоновый процесс без systemd, `hermes dashboard --host
+100.91.242.8 --port 9119 --no-open` (Tailscale IP сервера, не
+`127.0.0.1` — потому дашборд открывается напрямую с любого устройства в
+Tailscale-сети, без SSH-туннеля). Backend-роуты плагинов монтируются
+**только при старте процесса** — рескан-эндпоинт их не подхватывает, а
+без systemd рестарт означало «найти PID и убить руками». Заведён
+нормальный юнит — см. шаги ниже, дальше рестарт всегда через
+`systemctl --user restart hermes-dashboard`.
+
 Дашборд должен быть уже установлен (`web` extra — см. `hermes dashboard`
 в документации Hermes). Если ещё не поднимался на сервере:
 
@@ -55,33 +65,43 @@ IIFE), `dist/style.css`.
 cd ~/.hermes/hermes-agent && uv pip install -e ".[web,pty]"
 ```
 
-Сама вкладка:
+Сама вкладка + перевод дашборда на systemd:
 
 ```bash
 cd ~/ai-team-v2 && git pull
 mkdir -p ~/.hermes/plugins
 cp -r plugins/edith-vault ~/.hermes/plugins/edith-vault
 
-# Если дашборд уже запущен — форсировать пересканирование без рестарта:
-curl http://127.0.0.1:9119/api/dashboard/plugins/rescan
-# Если ещё не запущен:
-hermes dashboard --no-open
+# Старый ручной процесс — найти и остановить (замени PID на актуальный):
+ps aux | grep "hermes dashboard"
+kill <PID>
+
+# Юнит — один раз:
+mkdir -p ~/.config/systemd/user
+sed "s#/home/michael#$HOME#g" ops/hermes-dashboard.service.template \
+  > ~/.config/systemd/user/hermes-dashboard.service
+systemctl --user daemon-reload
+systemctl --user enable --now hermes-dashboard
+systemctl --user status hermes-dashboard
 ```
 
-⚠️ Backend-роуты плагина (`plugin_api.py`) монтируются один раз при
-старте процесса, **не** подхватываются рескан-эндпоинтом — если после
-`rescan` вкладка появилась, но `/api/plugins/edith-vault/tree` отдаёт
-404, перезапусти сам процесс дашборда.
+Дальше при любом обновлении плагинов — просто:
+```bash
+systemctl --user restart hermes-dashboard
+```
 
 ## Проверка
 
+С самого сервера (или откуда угодно в Tailscale-сети, подставив
+Tailscale IP):
 ```bash
-curl http://127.0.0.1:9119/api/dashboard/plugins | grep edith-vault
-curl http://127.0.0.1:9119/api/plugins/edith-vault/tree
+curl -s http://100.91.242.8:9119/api/dashboard/plugins | grep edith-vault
+curl -s http://100.91.242.8:9119/api/plugins/edith-vault/tree
 ```
 
 Второй вызов должен вернуть список путей `.md`-файлов из vault. Открой
-дашборд в браузере — во вкладках должна появиться **Vault**.
+`http://100.91.242.8:9119` в браузере на устройстве, подключённом к той
+же Tailscale-сети — во вкладках должна появиться **Vault**.
 
 ## Известные упрощения v1
 

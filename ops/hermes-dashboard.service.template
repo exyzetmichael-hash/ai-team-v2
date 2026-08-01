@@ -1,0 +1,15 @@
+[Unit]
+Description=Hermes web dashboard (machine-level, все профили)
+After=network.target
+
+[Service]
+Type=simple
+# Bind-адрес — Tailscale IP этого сервера, не 127.0.0.1: так дашборд
+# доступен с любого устройства в твоей Tailscale-сети без SSH-туннеля.
+# Замени на актуальный `tailscale ip -4`, если он когда-нибудь сменится.
+ExecStart=/home/michael/.hermes/hermes-agent/venv/bin/hermes dashboard --host 100.91.242.8 --port 9119 --no-open
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
