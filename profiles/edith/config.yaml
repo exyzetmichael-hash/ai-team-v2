@@ -232,3 +232,22 @@ platform_toolsets:
     - terminal
     - vision
     - delegation
+
+# --- api_server: локальный OpenAI-совместимый /v1/chat/completions ---
+#
+# Нужен ТОЛЬКО для profiles/edith/guest-bridge/guest_bridge.py — моста между
+# Telegram Guest Bots (Bot API 10.0, поле guest_message, апрель-май 2026) и
+# EDITH. Сам Hermes про guest_message не знает (issue #21587, не начато) —
+# мост говорит с Telegram напрямую, а сюда стучится за настоящим ответом
+# EDITH (её SOUL, память, инструменты), не пересобирая агентный цикл заново.
+#
+# Слушает СТРОГО 127.0.0.1 (DEFAULT_HOST в api_server.py) — наружу не торчит,
+# порт 8642 (DEFAULT_PORT) не пересекается с дашбордом (9119). Ключ — не
+# сюда, а в .env как API_SERVER_KEY (тот же паттерн, что везде: секреты в
+# .env, конфиг только про поведение). Без API_SERVER_KEY этот platform
+# вообще не запустится (см. connect() в api_server.py) — это осознанно,
+# не полагаемся на «случайно не сработает».
+gateway:
+  platforms:
+    api_server:
+      enabled: true

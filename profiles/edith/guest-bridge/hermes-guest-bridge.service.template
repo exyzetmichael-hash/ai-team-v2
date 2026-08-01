@@ -1,0 +1,16 @@
+[Unit]
+Description=EDITH Telegram Guest Bots bridge (Bot API 10.0 guest_message)
+# Не привязываем к hermes-gateway-edith.service through After= сильнее, чем
+# просто network — этот мост не должен считаться частью гейтвея. Если он
+# упадёт, личка и группы EDITH продолжают работать как обычно.
+After=network.target hermes-gateway-edith.service
+
+[Service]
+Type=simple
+EnvironmentFile=/home/michael/.hermes/profiles/edith/.env
+ExecStart=/home/michael/.hermes/hermes-agent/venv/bin/python3 /home/michael/ai-team-v2/profiles/edith/guest-bridge/guest_bridge.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
