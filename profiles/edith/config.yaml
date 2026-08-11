@@ -215,7 +215,6 @@ platform_toolsets:
     - todo
     - cronjob
     - clarify
-    - tts
     - terminal
     - vision
     - delegation
@@ -228,7 +227,6 @@ platform_toolsets:
     - todo
     - cronjob
     - clarify
-    - tts
     - terminal
     - vision
     - delegation
@@ -251,3 +249,126 @@ gateway:
   platforms:
     api_server:
       enabled: true
+
+# --- Сжатие контекста: главный рычаг стоимости (аудит 2026-08-11) ---
+#
+# ЗАЧЕМ. Замер state.db показал: из 120.5M токенов 116.5M — это ЧТЕНИЕ
+# КЭША, то есть перечитывание одной и той же разбухшей истории. Средний
+# контекст — ~146K токенов на вызов при 795 вызовах. Одна Telegram-сессия
+# от 30 июля (646 сообщений, 226 вызовов инструментов, никогда не
+# сбрасывалась) съела $2.84 из $3.62 — 78% всех трат за период.
+#
+# ПРИЧИНА — в комментарии самого Hermes к proactive_prune_tokens: «на
+# моделях с большим окном threshold (≈50% окна) срабатывает редко, поэтому
+# старый вывод инструментов остаётся в истории и пересылается каждый ход».
+# У luna окно 400K-1M → сжатие ждало 200-500K и сработало 1 (один) раз за
+# 30 дней. А terminal — 619 вызовов, 52% всех инструментов, и вывод
+# каждого оседал в контексте навсегда.
+#
+# ⚠️ Эти три ключа были выставлены через `hermes config set` прямо на
+# сервере и жили ТОЛЬКО в живом конфиге. Дублируются сюда, иначе обычный
+# `cp profiles/edith/config.yaml ~/.hermes/profiles/edith/` их затрёт.
+compression:
+  # Абсолютный порог вместо доли огромного окна. Сжатие теперь при 60K,
+  # а не при 200-500K. Ужимает до threshold × target_ratio ≈ 12K.
+  threshold_tokens: 60000
+  # Детерминированная чистка старого вывода инструментов БЕЗ вызова LLM
+  # (то есть бесплатная). Требует Hermes >= 0.20 — на 0.19 ключ molча
+  # игнорировался, это и было причиной обновления 2026-08-11.
+  proactive_prune_tokens: 48000
+  # Сессия, возобновлённая после часа простоя, сжимает историю ДО первого
+  # ответа. Прямо бьёт в сценарий «написал утром, вернулся вечером» —
+  # именно он и дал ту дорогую сессию на $2.84.
+  idle_compact_after_seconds: 3600
+
+# --- Отключённые скиллы ---
+#
+# Установлено 94 скилла, за 30 дней EDITH грузила 9. Индекс скиллов сам по
+# себе дёшев (9 KB в СТАБИЛЬНОЙ части промпта, кэшируется на 97.7%) —
+# экономия тут доли процента, и это НЕ главная причина списка.
+#
+# Главное — риск: `skill_view` загружает SKILL.md ЦЕЛИКОМ в диалог, где
+# кэш-тариф уже не действует, и файл висит там до конца сессии. В наборе
+# лежали humanizer (34 KB), claude-code (34 KB), p5js (27 KB), comfyui
+# (24 KB) — одна случайная загрузка это ~9K токенов навсегда. За 30 дней
+# было 59 вызовов skill_view.
+#
+# Отключаются ТОЛЬКО плоские имена скиллов — категории Hermes не понимает
+# (agent/skill_utils.py: `str(skill_name) in disabled`).
+#
+# Оставлены: 9 реально использованных + те, что попадают в задачи Михаила
+# (учёба по ML, переезд, документы, маркетплейс с сентября).
+# Вернуть любой — просто убрать строку отсюда.
+skills:
+  disabled:
+    - airtable
+    - apple-notes
+    - apple-reminders
+    - architecture-diagram
+    - ascii-video
+    - audiocraft-audio-generation
+    - baoyu-infographic
+    - blogwatcher
+    - claude-code
+    - claude-design
+    - codebase-inspection
+    - codex
+    - comfyui
+    - computer-use
+    - design-md
+    - dogfood
+    - evaluating-llms-harness
+    - excalidraw
+    - findmy
+    - gif-search
+    - github-auth
+    - github-code-review
+    - github-issue-to-pr
+    - github-issues
+    - github-pr-workflow
+    - github-repo-management
+    - heartmula
+    - hermes-agent-skill-authoring
+    - hermes-desktop-plugins
+    - hermes-themes
+    - himalaya
+    - humanizer
+    - imessage
+    - inspecting-hermes-desktop-dom
+    - jupyter-live-kernel
+    - llama-cpp
+    - llm-wiki
+    - manim-video
+    - merge-reconciler
+    - nano-pdf
+    - node-inspect-debugger
+    - notion
+    - ocr-and-documents
+    - opencode
+    - openhue
+    - p5js
+    - petdex
+    - polymarket
+    - popular-web-designs
+    - powerpoint
+    - pretext
+    - python-debugpy
+    - requesting-code-review
+    - research-paper-writing
+    - sdlc-review
+    - segment-anything-model
+    - serving-llms-vllm
+    - simplify-code
+    - sketch
+    - songsee
+    - songwriting-and-ai-music
+    - spike
+    - systematic-debugging
+    - teams-meeting-pipeline
+    - test-driven-development
+    - touchdesigner-mcp
+    - tui-widgets
+    - weights-and-biases
+    - xurl
+    - youtube-content
+    - yuanbao
