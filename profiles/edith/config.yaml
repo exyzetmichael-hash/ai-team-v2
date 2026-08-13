@@ -127,8 +127,8 @@ agent:
     # Ими EDITH сама уходит вглубь узкой темы (право/учёба/ресёрч/трекинг
     # проектов) и возвращается с ответом — Михаил этого не видит, для него
     # это один голос.
-    # vision оставлена включённой — vault может содержать картинки/скриншоты,
-    # а Google-таблица финансов может потребовать распознать чек с фото.
+    # vision оставлена включённой — Google-таблица финансов может
+    # потребовать распознать чек с фото.
 
 # Ручное подтверждение по-настоящему опасных команд (rm -rf, форк-бомбы и
 # т.п. из встроенного списка Hermes) — раз есть terminal (нужен для
@@ -136,26 +136,13 @@ agent:
 approvals:
   mode: manual
 
-# --- MCP: filesystem + graphify (vault) и todoist (задачи) ---
+# --- MCP: todoist (задачи) ---
 #
-# filesystem — официальный MCP-сервер (@modelcontextprotocol/server-filesystem),
-# read/write внутри vault, не всей ФС сервера. Подставь свой путь клона.
-#
-# graphify — граф знаний поверх vault, дешёвые структурные запросы вместо
-# перечитывания сырых файлов на каждый вопрос. Только чтение графа.
-# graph.json собирается один раз командой `graphify extract` и лежит внутри
-# клона vault, вне git. У Graphify нет подкоманды `serve` — единственный
-# подтверждённый способ запуска: `python -m graphify.serve <путь>`, через
-# `uv tool run --from graphifyy` (пакет ставится изолированно).
+# filesystem/graphify (доступ к Obsidian vault) убраны 2026-08-14 — vault
+# перенесён Михаилом в локальный Obsidian под Claude Code, EDITH его больше
+# не читает и не пишет. Если понадобится вернуть — смотри git-историю этого
+# файла (коммит с сообщением "edith: убрать vault").
 mcp_servers:
-  filesystem:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/michael/vault"]
-
-  graphify:
-    command: uv
-    args: ["tool", "run", "--from", "graphifyy", "python", "-m", "graphify.serve", "/home/michael/vault/graphify-out/graph.json"]
-
   # Официальный сервер от Doist (@doist/todoist-mcp, npm), stdio-режим.
   # Токен НЕ вписывать сюда — Hermes подставляет ${TODOIST_API_KEY} из .env.
   todoist:
@@ -189,9 +176,8 @@ mcp_servers:
 # календарь+таблицы) — у bundled-скилла нет отдельного тула, все операции
 # идут через shell. Полноценный шелл, не ограниченный конкретными
 # командами — риск смягчён approvals.mode: manual выше.
-# НЕ ограничиваем terminal.cwd vault-директорией (как раньше делал brain):
-# EDITH нужен доступ и к vault, и к Google-скрипту вне vault. Сам доступ к
-# vault всё равно идёт через filesystem/graphify MCP выше, не через cwd.
+# НЕ ограничиваем terminal.cwd конкретной директорией — нужен доступ к
+# Google-скрипту (google_api.py) в произвольном месте на сервере.
 #
 # ⚠️ `delegation` ОБЯЗАТЕЛЕН и его легко потерять. Когда в этих списках
 # перечислены конкретные тулсеты (а не композит вроде `hermes-cli`), Hermes
@@ -304,6 +290,7 @@ skills:
     - airtable
     - apple-notes
     - apple-reminders
+    - obsidian       # 2026-08-14: vault убран, доступа к файлам нет — скилл мёртв
     - architecture-diagram
     - ascii-video
     - audiocraft-audio-generation
