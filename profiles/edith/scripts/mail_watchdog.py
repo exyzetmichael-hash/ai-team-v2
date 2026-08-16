@@ -36,6 +36,18 @@ from pathlib import Path
 # профиль edith, тот же, что резолвит google_api.py при штатном запуске.
 EDITH_HOME = Path(os.environ.get("HERMES_HOME", "") or (Path.home() / ".hermes" / "profiles" / "edith"))
 GOOGLE_API = EDITH_HOME / "skills" / "productivity" / "google-workspace" / "scripts" / "google_api.py"
+
+# ⚠️ Намеренно НЕ sys.executable. google_api.py использует googleapiclient,
+# который стоит только в venv самого Hermes — если этот сторож запустят
+# голым системным python3 (вручную для теста, или если cron когда-нибудь
+# станет резолвить интерпретатор иначе), sys.executable окажется без
+# нужных пакетов и упадёт с ModuleNotFoundError. Идём напрямую в venv,
+# который точно есть — это тот же путь, что в ExecStart всех systemd-юнитов
+# Hermes на этом сервере. Раз в жизни этот путь мог измениться при
+# переустановке — если сторож молчит вместо нормальной работы, первым
+# делом проверь, что он существует.
+_VENV_PYTHON = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python3"
+PYTHON_BIN = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
 SEEN_FILE = EDITH_HOME / "watchdog_seen_mail.json"
 MAX_SEEN_KEEP = 500  # не даём файлу расти бесконечно
 
@@ -83,7 +95,7 @@ def _fetch_unread() -> list[dict]:
     env["HERMES_HOME"] = str(EDITH_HOME)
     try:
         result = subprocess.run(
-            [sys.executable, str(GOOGLE_API), "gmail", "search", "is:unread newer_than:2d", "--max", "20"],
+            [PYTHON_BIN, str(GOOGLE_API), "gmail", "search", "is:unread newer_than:2d", "--max", "20"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -93,12 +105,12 @@ def _fetch_unread() -> list[dict]:
         print(f"[сторож почты] не смог вызвать google_api.py: {exc}", file=sys.stderr)
         return []
     if result.returncode != 0:
-        print(f"[сторож почты] google_api.py упал (код {result.returncode}): {result.stderr[:400]}", file=sys.stderr)
+        print(f"[сторож почты] google_api.py упал (код {result.returncode}): {result.stderr[:2000]}", file=sys.stderr)
         return []
     try:
         return json.loads(result.stdout)
     except Exception as exc:
-        print(f"[сторож почты] не распарсил вывод google_api.py: {exc}. Вывод: {result.stdout[:400]}", file=sys.stderr)
+        print(f"[сторож почты] не распарсил вывод google_api.py: {exc}. Вывод: {result.stdout[:2000]}", file=sys.stderr)
         return []
 
 
