@@ -64,6 +64,17 @@ KEYWORDS = [
     "дедлайн", "deadline", "срок подачи",
 ]
 
+# ⚠️ Живой прогон 2026-08-15: "оплат"/"счёт" ловят обычные чеки от
+# фискальных операторов на каждую покупку картой — это не то, что Михаил
+# просил ("чеки кстати не важные письма"). Не сужаем денежные ключевые
+# слова (это убило бы реальные счета на оплату от других отправителей) —
+# вместо этого блокируем ЗАВЕДОМО чековых отправителей отдельно, до
+# проверки ключевых слов. Список — известные ОФД (операторы фискальных
+# данных), их конечное число, можно перечислить явно.
+NOISE_SENDERS = [
+    "офд", "ofd", "такском", "taxcom", "platformaofd", "1c-ofd", "ярус",
+]
+
 # Gmail-метки, которые заведомо шум — реклама и соцсети почти никогда не
 # важны, даже если случайно зацепили ключевое слово.
 NOISE_LABELS = {"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "SPAM"}
@@ -118,6 +129,9 @@ def _is_important(msg: dict) -> bool:
     labels = set(msg.get("labels") or [])
     if labels & NOISE_LABELS:
         return False
+    sender = (msg.get("from") or "").lower()
+    if any(noise in sender for noise in NOISE_SENDERS):
+        return False  # известный чековый отправитель — не то, что он просил
     haystack = f"{msg.get('subject', '')} {msg.get('from', '')} {msg.get('snippet', '')}".lower()
     return any(kw in haystack for kw in KEYWORDS)
 
