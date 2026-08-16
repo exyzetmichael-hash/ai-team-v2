@@ -103,7 +103,11 @@ agent:
   # надёжный способ выключить тулсет — явно перечислить его здесь.
   disabled_toolsets:
     - code_execution  # выполнение произвольного кода не нужно; включить, если арифметика по деньгам начнёт хромать
-    - browser         # тяжёлая браузерная автоматизация
+    # browser включён 2026-08-16 — см. platform_toolsets ниже и docs/browser-research.md.
+    # Раньше web-research скрейпил через terminal+requests+regex (46% всех вызовов
+    # инструментов за неделю, живьём падало без bs4, лезло парсить Google напрямую).
+    # agent-browser (Vercel, уже встроен в Hermes) — компактные ref-команды вместо
+    # сырого HTML, локальный headless Chromium, без API-ключа и облака.
     - computer_use
     - image_gen
     - video
@@ -203,6 +207,7 @@ platform_toolsets:
     - clarify
     - terminal
     - vision
+    - browser       # agent-browser, для web-research вместо terminal+requests
     - delegation
   telegram:
     - web
@@ -215,6 +220,7 @@ platform_toolsets:
     - clarify
     - terminal
     - vision
+    - browser       # agent-browser, для web-research вместо terminal+requests
     - delegation
 
 # --- api_server: локальный OpenAI-совместимый /v1/chat/completions ---
