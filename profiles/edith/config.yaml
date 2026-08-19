@@ -66,6 +66,20 @@ stt:
 # читает его как top-level или из gateway:, отдельного узла под stt: нет).
 stt_echo_transcripts: false
 
+# ⚠️ Не убирать, даже если выглядит избыточным. В этой версии hermes-agent
+# ключ browser.backend по умолчанию (когда не задан) переключается на
+# отдельный харнесс browser-use (Python-пакет, не путать с agent-browser от
+# Vercel, ради которого и включался тулсет `browser` — см.
+# docs/browser-research.md) при первом же условии, что uvx запускаем на
+# сервере — а он запускаем. EDITH тогда молча получает browser_exec вместо
+# browser_navigate/browser_snapshot и не может поднять браузер, при этом все
+# фиксы agent-browser (AGENT_BROWSER_EXECUTABLE_PATH/ARGS в systemd-юните)
+# оказываются бесполезны — не тот инструмент вызывается. Явно фиксируем
+# agent-browser. Кавычки обязательны — тот же YAML 1.1 гочтя с `off`, что и у
+# display.memory_notifications ниже.
+browser:
+  backend: "off"
+
 # Hermes после хода форкает агента и спрашивает сам себя «стоит ли что-то
 # запомнить / поправить скилл» (agent/background_review.py) — это ОТДЕЛЬНЫЙ
 # вызов модели. Сам механизм полезен (EDITH накапливает знание о Михаиле,

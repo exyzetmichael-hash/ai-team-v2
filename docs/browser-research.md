@@ -107,3 +107,90 @@ Environment="AGENT_BROWSER_ARGS=--no-sandbox,--disable-dev-shm-usage"
 Актуально при **любом** пересоздании юнита или переезде на другой сервер —
 без этих двух строк `browser` снова молча выключится, и это не будет очевидно
 без чтения `journalctl --user -u hermes-gateway-edith | grep browser`.
+
+## Второй гочтя: два фикса выше применены, EDITH всё равно не поднимает браузер (2026-08-19)
+
+После обоих фиксов выше (`chrome-` нейминг + `--no-sandbox` через
+`Environment=` в юните) EDITH **всё ещё** отвечала «Chrome не запущен, не
+смог его поднять». Причина оказалась не в agent-browser вообще — в двух
+независимых вещах:
+
+**2а. Демон agent-browser — отдельный от systemd-юнита долгоживущий процесс,
+рестарт юнита его не трогает.** `agent-browser` держит фоновый демон
+(`agent-browser-linux-x64`, отдельный PID, не дочерний процесс гейтвея) —
+CLI-вызовы из `browser_tool.py` просто подключаются к нему по сокету. Если
+демон уже был запущен ДО правки `Environment=` в юните, он навсегда остаётся
+со старым (нерабочим) окружением: `agent-browser` прямо отказывается
+принимать новые `--args`/env, пока демон жив (`--args ignored: daemon
+already running`). Рестарт `hermes-gateway-edith` эту проблему не решает —
+демон переживает рестарт гейтвея. Нужно убить его явно, чтобы следующий
+вызов поднял новый демон уже с правильным окружением:
+
+```bash
+agent-browser close --all   # или pkill -f agent-browser-linux-x64
+```
+
+(сам факт «когда правил юнит — не тронул демон» и потерял ~30 минут на этом:
+`ps aux | grep agent-browser` сразу показал бы процесс, живущий с момента
+ДО правки юнита).
+
+**2б. Более важная причина — `browser` в этой версии Hermes это не всегда
+agent-browser.** В `tools/browser_use_cli.py` появился альтернативный бэкенд
+— CLI-обвязка над Python-пакетом `browser-use` (не путать с `agent-browser`
+от Vercel — это два разных инструмента с почти одинаковым названием).
+`is_browser_use_cli_mode()`:
+
+> Browser Use mode is the DEFAULT: an unset `browser.backend` ("") enables
+> it whenever the browser-use CLI is runnable (installed binary or uvx).
+
+То есть если `browser.backend` не задан явно в конфиге — а его никто и не
+задавал, потому что весь этот раздел документа был написан про
+agent-browser, — и на сервере стоит `uvx` (стоит, часть `uv`-тулчейна для
+других задач), Hermes **молча подменяет весь тулсет** `browser_navigate`/
+`browser_snapshot`/... на один инструмент `browser_exec`, работающий через
+`browser-use`. Этот харнесс сам пытается подключиться по CDP к уже
+запущенному локальному Chrome, а не поднимает свой через
+`AGENT_BROWSER_EXECUTABLE_PATH` — поэтому все переменные окружения из
+раздела «Известный гочтя» выше не имели никакого эффекта: EDITH их вызывала,
+но не тем инструментом. Ошибка в логе харнесса (не в логе гейтвея, отдельный
+файл — `~/.hermes/profiles/edith/home/.config/browser-harness/tmp/bu-default.log`):
+
+```
+fatal: chrome-not-running: no supported Chromium-family browser is running -- start Chrome, then retry
+```
+
+**Фикс** — явно выключить автопереход на `browser-use`, оставив
+agent-browser, ради которого и писался весь этот документ:
+
+```yaml
+# ~/.hermes/profiles/edith/config.yaml
+browser:
+  backend: 'off'
+```
+
+(закавычено намеренно — YAML 1.1 без кавычек читает `off` как булево
+`False`; код `get_browser_backend()` это отдельно обрабатывает, но кавычки
+оставлены для консистентности с остальным конфигом, где та же ловушка уже
+описана для `display.memory_notifications`.)
+
+После `daemon-reload` + `restart hermes-gateway-edith` живой прогон
+(CLI, `hermes -p edith -z "..."`) подтвердил: `browser_navigate` +
+`browser_snapshot` реально ходят на страницу и возвращают настоящий
+accessibility snapshot — WB (`seller.wildberries.ru/tariffs/commissions`)
+честно упёрся в форму логина продавца, Ozon (несколько публичных URL) — в
+антибот; оба раза EDITH отказалась подставить цифру по памяти вместо
+непрочитанной страницы. Значит сам браузерный тул уже рабочий; доступ к
+конкретно комиссиям FBO без входа в кабинет продавца — отдельный вопрос, не
+про Hermes.
+
+**Порядок диагностики на будущее**, если `browser` снова "не поднимается"
+после вроде бы верного фикса:
+
+1. `cat /proc/$(systemctl --user show -p MainPID --value hermes-gateway-edith)/environ | grep AGENT_BROWSER` — юнит вообще видит переменные?
+2. `ps aux | grep agent-browser` — нет ли демона, живущего ДО последней правки юнита? Если есть — `agent-browser close --all`.
+3. `cat ~/.hermes/profiles/edith/config.yaml | grep -A2 '^browser:'` — не откатился ли `backend: off` (например, после `cp` из репозитория, где этой строки может не быть).
+4. Лог реальной ошибки harness'а лежит не в `gateway.log`, а в
+   `~/.hermes/profiles/edith/home/.config/browser-harness/tmp/bu-default.log`
+   — если тулсет `browser-use`, а не `agent-browser`, снова стал активным
+   (например, после обновления Hermes сбросило `browser.backend`), ошибка
+   там, не в основных логах гейтвея.
