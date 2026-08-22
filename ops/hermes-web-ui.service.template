@@ -1,0 +1,28 @@
+[Unit]
+Description=EDITH web UI (свой интерфейс вместо Telegram, только в tailnet)
+After=network.target
+# Гейтвей должен подняться раньше: без него интерфейс откроется, но на
+# первое же сообщение ответит «gateway не отвечает». Wants, а не Requires —
+# если гейтвей упадёт, интерфейс должен остаться доступен и показывать
+# историю, а не выключаться следом.
+Wants=hermes-gateway-edith.service
+After=hermes-gateway-edith.service
+# Сервис биндится на tailnet-адрес, которого до подъёма интерфейса не
+# существует — иначе старт падает с "Cannot assign requested address".
+Wants=tailscaled.service
+After=tailscaled.service
+
+[Service]
+Type=simple
+Environment="HERMES_HOME=/home/michael/.hermes/profiles/edith"
+ExecStart=/home/michael/.hermes/hermes-agent/venv/bin/python3 /home/michael/ai-team-v2/profiles/edith/web/server.py
+Restart=always
+RestartSec=5
+# Интерфейс Tailscale может подняться позже сервиса — не сдаёмся после
+# нескольких неудачных стартов подряд.
+StartLimitIntervalSec=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -14,3 +14,5 @@ finance_seen.json
 politeh_schedule.json
 politeh_schedule_state.json
 watchdog_seen_mail.json
+web_ui.json
+web_ui.db

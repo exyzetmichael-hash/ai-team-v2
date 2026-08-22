@@ -1,0 +1,216 @@
+/* Тёмная тема по умолчанию: EDITH чаще открывается с телефона вечером,
+   и белая простыня в темноте бьёт по глазам. Светлая — если система
+   просит светлую. */
+:root {
+  --bg: #0f1115;
+  --bg-raised: #171a21;
+  --bg-input: #1d212a;
+  --border: #262b36;
+  --text: #e6e9ef;
+  --text-dim: #8b94a5;
+  --accent: #4a9eff;
+  --user-bubble: #21426b;
+  --danger: #ff6b6b;
+  --radius: 14px;
+  --sidebar-w: 260px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --bg-raised: #f5f6f8;
+    --bg-input: #eef0f4;
+    --border: #dfe3ea;
+    --text: #14171c;
+    --text-dim: #667085;
+    --user-bubble: #d6e6ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* Сафари на айфоне зумит при фокусе в поле меньше 16px — держим 16. */
+  -webkit-text-size-adjust: 100%;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- вход ---------- */
+
+.gate {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg); z-index: 100; padding: 24px;
+}
+.gate-box { width: 100%; max-width: 320px; text-align: center; }
+.gate-box h1 { margin: 0 0 4px; font-size: 32px; letter-spacing: 2px; }
+.gate-box p { margin: 0 0 20px; color: var(--text-dim); font-size: 14px; }
+.gate-box input, .gate-box button {
+  width: 100%; padding: 13px 16px; margin-bottom: 10px;
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--bg-input); color: var(--text); font-size: 16px;
+}
+.gate-box button {
+  background: var(--accent); color: #fff; border: none;
+  font-weight: 600; cursor: pointer;
+}
+.gate-error { color: var(--danger); font-size: 14px; min-height: 20px; }
+
+/* ---------- каркас ---------- */
+
+.app { display: flex; height: 100%; }
+
+.sidebar {
+  width: var(--sidebar-w); flex-shrink: 0;
+  background: var(--bg-raised); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  padding-top: env(safe-area-inset-top);
+}
+.sidebar-head { display: flex; gap: 8px; padding: 12px; }
+.new-chat {
+  flex: 1; padding: 11px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--bg-input);
+  color: var(--text); font-size: 15px; cursor: pointer;
+}
+.new-chat:hover { border-color: var(--accent); }
+
+.conv-list { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+.conv-item {
+  padding: 10px 12px; margin-bottom: 4px; border-radius: 10px;
+  cursor: pointer; font-size: 14px; color: var(--text-dim);
+  display: flex; align-items: center; gap: 8px;
+}
+.conv-item:hover { background: var(--bg-input); color: var(--text); }
+.conv-item.active { background: var(--bg-input); color: var(--text); }
+.conv-item-title {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conv-del {
+  opacity: 0; border: none; background: none; color: var(--text-dim);
+  cursor: pointer; font-size: 16px; padding: 0 4px; flex-shrink: 0;
+}
+.conv-item:hover .conv-del { opacity: 1; }
+.conv-del:hover { color: var(--danger); }
+
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; padding-top: calc(10px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.conv-title {
+  font-size: 15px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.icon-btn {
+  border: none; background: none; color: var(--text);
+  font-size: 20px; cursor: pointer; padding: 4px 8px; line-height: 1;
+}
+
+/* ---------- сообщения ---------- */
+
+.messages { flex: 1; overflow-y: auto; padding: 20px 16px; }
+.msg { max-width: 760px; margin: 0 auto 18px; display: flex; }
+.msg-body {
+  padding: 11px 15px; border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+.msg.user { justify-content: flex-end; }
+.msg.user .msg-body {
+  background: var(--user-bubble); border-bottom-right-radius: 4px;
+  max-width: 85%;
+}
+.msg.assistant .msg-body {
+  background: transparent; padding-left: 0; padding-right: 0; width: 100%;
+}
+
+/* Разметка в ответах — то, чего в Telegram толком нет: таблицы, код,
+   вложенные списки. Ради этого веб-интерфейс во многом и делался. */
+.msg-body p { margin: 0 0 10px; }
+.msg-body p:last-child { margin-bottom: 0; }
+.msg-body ul, .msg-body ol { margin: 0 0 10px; padding-left: 22px; }
+.msg-body li { margin-bottom: 4px; }
+.msg-body h1, .msg-body h2, .msg-body h3 {
+  margin: 16px 0 8px; font-size: 1.08em; line-height: 1.3;
+}
+.msg-body code {
+  background: var(--bg-input); padding: 2px 6px; border-radius: 5px;
+  font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.msg-body pre {
+  background: var(--bg-input); padding: 12px 14px; border-radius: 10px;
+  overflow-x: auto; margin: 0 0 10px;
+}
+.msg-body pre code { background: none; padding: 0; }
+.msg-body a { color: var(--accent); }
+.msg-body table {
+  border-collapse: collapse; margin: 0 0 10px; font-size: 0.92em;
+  display: block; overflow-x: auto; max-width: 100%;
+}
+.msg-body th, .msg-body td {
+  border: 1px solid var(--border); padding: 6px 10px; text-align: left;
+}
+.msg-body th { background: var(--bg-input); }
+.msg-body blockquote {
+  margin: 0 0 10px; padding-left: 12px;
+  border-left: 3px solid var(--border); color: var(--text-dim);
+}
+
+.typing { display: inline-flex; gap: 4px; padding: 4px 0; }
+.typing span {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim);
+  animation: blink 1.3s infinite;
+}
+.typing span:nth-child(2) { animation-delay: .2s; }
+.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 60%, 100% { opacity: .25 } 30% { opacity: 1 } }
+
+.empty-state {
+  text-align: center; color: var(--text-dim);
+  margin-top: 22vh; font-size: 15px;
+}
+
+/* ---------- ввод ---------- */
+
+.composer {
+  display: flex; align-items: flex-end; gap: 10px;
+  padding: 12px 16px; padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border); flex-shrink: 0;
+}
+.composer textarea {
+  flex: 1; resize: none; max-height: 180px;
+  padding: 11px 15px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--bg-input);
+  color: var(--text); font: inherit; font-size: 16px;
+}
+.composer textarea:focus { outline: none; border-color: var(--accent); }
+.composer button {
+  width: 42px; height: 42px; flex-shrink: 0;
+  border: none; border-radius: 50%; background: var(--accent);
+  color: #fff; font-size: 20px; cursor: pointer;
+}
+.composer button:disabled { opacity: .4; cursor: default; }
+
+/* ---------- мобильная раскладка ---------- */
+
+.only-mobile { display: none; }
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 8; }
+
+@media (max-width: 760px) {
+  .only-mobile { display: block; }
+  .sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0; z-index: 9;
+    transform: translateX(-100%); transition: transform .22s ease;
+  }
+  .sidebar.open { transform: translateX(0); }
+  .msg.user .msg-body { max-width: 90%; }
+}

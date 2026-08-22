@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>EDITH</title>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- Экран входа. Tailscale уже пускает только свои устройства, но токен —
+     вторая линия: телефон в руках у кого-то ещё не должен открывать доступ
+     к почте, деньгам и задачам через EDITH. -->
+<div id="gate" class="gate">
+  <div class="gate-box">
+    <h1>EDITH</h1>
+    <p>Введи токен интерфейса</p>
+    <input id="token-input" type="password" autocomplete="current-password" placeholder="токен">
+    <button id="token-submit">Войти</button>
+    <div id="gate-error" class="gate-error"></div>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-head">
+      <button id="new-chat" class="new-chat">+ Новый разговор</button>
+      <button id="close-sidebar" class="icon-btn only-mobile" aria-label="Закрыть">✕</button>
+    </div>
+    <div id="conv-list" class="conv-list"></div>
+  </aside>
+  <div id="scrim" class="scrim hidden"></div>
+
+  <main class="main">
+    <header class="topbar">
+      <button id="open-sidebar" class="icon-btn only-mobile" aria-label="Разговоры">☰</button>
+      <div id="conv-title" class="conv-title">EDITH</div>
+    </header>
+
+    <div id="messages" class="messages"></div>
+
+    <form id="composer" class="composer">
+      <textarea id="input" rows="1" placeholder="Написать EDITH…" autocomplete="off"></textarea>
+      <button id="send" type="submit" aria-label="Отправить">↑</button>
+    </form>
+  </main>
+
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
