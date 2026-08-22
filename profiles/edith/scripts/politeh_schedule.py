@@ -47,6 +47,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -144,6 +145,23 @@ def fetch_week(group_id: int, monday: dt.date) -> list[dict]:
     return lessons
 
 
+_SUBGROUP_RE = re.compile(r"п/?г\.?\s*(\d+)", re.IGNORECASE)
+
+
+def _subgroup_marker(note: str) -> str:
+    """Достаёт номер подгруппы из additional_info, если он там есть.
+
+    Живьём поймано: лабораторная может делиться на «п/г 1» и «п/г 2» —
+    два разных занятия в один и тот же час, разные аудитории. Без этого
+    маркера у обоих одинаковый lesson_key, и второе тихо затирает первое
+    в словаре desired — то есть подгруппа 1 молча пропадала бы из
+    календаря. additional_info для не поделённых занятий содержит другой
+    текст («Поток» и т.п.) — на это регулярка не реагирует, пустая строка.
+    """
+    m = _SUBGROUP_RE.search(note or "")
+    return f"пг{m.group(1)}" if m else ""
+
+
 def _parse_lesson(raw: dict, day_date: dt.date) -> Optional[dict]:
     subject = (raw.get("subject") or raw.get("subject_short") or "").strip()
     time_start = raw.get("time_start")
@@ -178,6 +196,8 @@ def _parse_lesson(raw: dict, day_date: dt.date) -> Optional[dict]:
         if full:
             teachers.append(full)
 
+    note = (raw.get("additional_info") or "").strip()
+
     return {
         "subject": subject,
         "type": lesson_type,
@@ -185,7 +205,8 @@ def _parse_lesson(raw: dict, day_date: dt.date) -> Optional[dict]:
         "end": end,
         "location": ", ".join(a for a in auditories if a),
         "teachers": ", ".join(teachers),
-        "note": (raw.get("additional_info") or "").strip(),
+        "note": note,
+        "subgroup": _subgroup_marker(note),
     }
 
 
@@ -196,14 +217,23 @@ def lesson_key(lesson: dict) -> str:
     другой кабинет, это то же занятие, его надо обновить, а не удалить и
     создать заново (иначе слетают напоминания, которые Михаил мог поставить).
     Смена времени — уже другая пара, и это правильно: старую надо убрать.
+
+    Подгруппа (см. `_subgroup_marker`) в ключе — иначе два занятия одной
+    группы в один час (например, лаба, поделённая на «п/г 1»/«п/г 2»)
+    схлопываются в одно, и одна из подгрупп тихо пропадает из calendar.
     """
-    return f"{lesson['start'].isoformat()}|{lesson['subject']}|{lesson['type']}"
+    key = f"{lesson['start'].isoformat()}|{lesson['subject']}|{lesson['type']}"
+    if lesson.get("subgroup"):
+        key += f"|{lesson['subgroup']}"
+    return key
 
 
 def lesson_to_event(lesson: dict) -> dict:
     title = lesson["subject"]
     if lesson["type"]:
         title = f"{title} ({lesson['type']})"
+    if lesson.get("subgroup"):
+        title = f"{title} [{lesson['subgroup']}]"
 
     description_parts = []
     if lesson["teachers"]:
