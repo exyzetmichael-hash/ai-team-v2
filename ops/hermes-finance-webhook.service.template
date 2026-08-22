@@ -1,0 +1,27 @@
+[Unit]
+Description=EDITH finance webhook (банковские пуши с телефона -> лист Операции)
+# Как и guest-bridge, это отдельный процесс, а не часть гейтвея: упадёт —
+# EDITH продолжает работать, потеряются только автоматические траты, и то
+# не насовсем (MacroDroid просто получит ошибку, уведомление останется на
+# телефоне).
+After=network.target
+# Ждём Tailscale: сервис биндится на tailnet-адрес, которого до подъёма
+# интерфейса ещё не существует, и старт упал бы с "Cannot assign requested
+# address". Если Tailscale ставился не как systemd-сервис, эту строку убрать.
+Wants=tailscaled.service
+After=tailscaled.service
+
+[Service]
+Type=simple
+Environment="HERMES_HOME=/home/michael/.hermes/profiles/edith"
+ExecStart=/home/michael/.hermes/hermes-agent/venv/bin/python3 /home/michael/.hermes/profiles/edith/scripts/finance_webhook.py
+Restart=always
+RestartSec=5
+# Интерфейс Tailscale может подняться позже сервиса — не сдаёмся после
+# нескольких неудачных стартов подряд.
+StartLimitIntervalSec=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

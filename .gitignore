@@ -4,3 +4,13 @@ __pycache__/
 
 # Секреты: в репозитории только .env.example, реальные .env — никогда
 .env
+
+# Состояние профиля живёт в ~/.hermes, но подстраховываемся: конфиг
+# finance-вебхука содержит общий секрет, а raw-лог — все траты Михаила.
+finance_webhook.json
+finance_raw.jsonl
+finance_unparsed.jsonl
+finance_seen.json
+politeh_schedule.json
+politeh_schedule_state.json
+watchdog_seen_mail.json
