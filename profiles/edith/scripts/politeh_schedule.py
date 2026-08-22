@@ -162,8 +162,22 @@ def _subgroup_marker(note: str) -> str:
     return f"пг{m.group(1)}" if m else ""
 
 
-def filter_own_subgroup(lessons: list[dict], my_subgroup: Optional[int]) -> list[dict]:
-    """Убирает занятия чужой подгруппы.
+def _same_subgroup(a: str, b: str) -> bool:
+    """Сравнение номеров подгрупп, нечувствительное к ведущим нулям.
+
+    ruz помечает подгруппы непоследовательно: у физики «п/г 1», у
+    иностранного «п/г 01». Это ОДИН И ТОТ ЖЕ формат записи числа, поэтому
+    внутри одного предмета «1» и «01» надо считать совпадением — иначе
+    человек, написавший в конфиге 1, потеряет пару, помеченную как 01.
+    Между разными предметами это сравнение не применяется вовсе (см.
+    filter_own_subgroup), так что независимая нумерация у языка и у лабы
+    друг другу не мешает.
+    """
+    return a.lstrip("0") == b.lstrip("0")
+
+
+def filter_own_subgroup(lessons: list[dict], subgroups: Optional[dict]) -> list[dict]:
+    """Убирает занятия чужой подгруппы — только по явно указанным предметам.
 
     ruz отдаёт расписание ГРУППЫ, а не человека: если лаба поделена на
     «п/г 1» и «п/г 2», в ответе лежат обе, в один и тот же час, в разных
@@ -171,26 +185,83 @@ def filter_own_subgroup(lessons: list[dict], my_subgroup: Optional[int]) -> list
     и не знает, какая его — один поход не в ту аудиторию, и календарю
     перестают верить, а весь смысл был в том, чтобы не думать.
 
-    Занятия без маркера подгруппы (лекции потока и вообще всё неделёное)
-    остаются всегда — они общие.
+    ⚠️ Почему по предметам, а не одним полем на всё (найдено 2026-08-22 на
+    реальных данных группы 60002): нумерация подгрупп у разных предметов
+    независимая. Физику делят пополам как «п/г 1»/«п/г 2», а иностранный
+    язык — по уровню, отдельной нумерацией «п/г 01». Общее поле
+    «моя подгруппа = 1» означало бы, что английский, помеченный 01,
+    молча исчезает из календаря — ровно тот провал, который этот фильтр
+    обязан предотвращать.
 
-    Если подгруппа не задана в конфиге, ничего не фильтруем: лучше лишняя
-    пара в календаре, чем молча выкинутая своя. Первокурсник узнаёт свою
-    подгруппу только к началу занятий, до этого поля просто нет.
+    Поэтому фильтруется ТОЛЬКО то, что явно перечислено в конфиге.
+    Предмет не упомянут — все его занятия остаются, сколько бы подгрупп
+    там ни было. Умолчания «на все остальные предметы» нет намеренно:
+    цена ошибки несимметрична — лишняя пара это раздражение, пропавшая
+    пара это прогул.
+
+    Формат в конфиге (ключ — любой кусок названия предмета, регистр
+    неважен):
+
+        "subgroups": {"физика": "1", "иностранный": "01"}
+
+    Занятия без маркера подгруппы (лекции потока) остаются всегда.
     """
-    if not my_subgroup:
+    if not subgroups:
         return lessons
-    mine = f"пг{int(my_subgroup)}"
-    kept, dropped = [], 0
+
+    normalized = {str(k).lower(): str(v).strip() for k, v in subgroups.items() if str(v).strip()}
+    kept: list[dict] = []
+    dropped: list[str] = []
+
     for lesson in lessons:
-        marker = lesson.get("subgroup")
-        if not marker or marker == mine:
+        marker = (lesson.get("subgroup") or "").replace("пг", "")
+        if not marker:
+            kept.append(lesson)  # общее занятие, не поделено
+            continue
+
+        subject_low = lesson["subject"].lower()
+        mine = next((v for k, v in normalized.items() if k in subject_low), None)
+        if mine is None:
+            kept.append(lesson)  # про этот предмет не сказано — не трогаем
+            continue
+
+        if _same_subgroup(marker, mine):
             kept.append(lesson)
         else:
-            dropped += 1
+            dropped.append(f"{lesson['subject']} (п/г {marker})")
+
     if dropped:
-        print(f"[расписание] отфильтровано занятий чужих подгрупп: {dropped}", file=sys.stderr)
+        print(f"[расписание] отфильтровано занятий чужих подгрупп: {len(dropped)}", file=sys.stderr)
+        for item in sorted(set(dropped)):
+            print(f"  — {item}", file=sys.stderr)
     return kept
+
+
+def report_subgroups(lessons: list[dict]) -> None:
+    """Печатает, у каких предметов есть деление на подгруппы и какие номера.
+
+    Нужно, чтобы настройка `subgroups` была выбором из списка, а не
+    угадыванием: сначала смотришь, что реально делится, потом вписываешь
+    свои номера.
+    """
+    found: dict[str, set[str]] = {}
+    for lesson in lessons:
+        marker = (lesson.get("subgroup") or "").replace("пг", "")
+        if marker:
+            found.setdefault(lesson["subject"], set()).add(marker)
+
+    if not found:
+        print("Ни один предмет в этом окне не делится на подгруппы — настраивать нечего.")
+        return
+
+    print("Предметы с делением на подгруппы (номера — как их пишет ruz):\n")
+    for subject in sorted(found):
+        print(f"  {subject}: п/г {', '.join(sorted(found[subject]))}")
+    print("\nВпиши свои в politeh_schedule.json, например:")
+    example = ", ".join(f'"{s.split()[0].lower()}": "{sorted(v)[0]}"' for s, v in sorted(found.items()))
+    print(f'  {{"group_id": ..., "subgroups": {{{example}}}}}')
+    print("\nКлюч — любой кусок названия предмета. Предмет, который не впишешь,")
+    print("фильтроваться не будет вообще: обе его подгруппы останутся в календаре.")
 
 
 def _parse_lesson(raw: dict, day_date: dt.date) -> Optional[dict]:
@@ -434,7 +505,8 @@ def main() -> None:
     parser.add_argument("--find-group", metavar="ЗАПРОС", help="найти id группы по номеру и выйти")
     parser.add_argument("--group-id", type=int, help="id группы (иначе берётся из politeh_schedule.json)")
     parser.add_argument("--weeks", type=int, help=f"на сколько недель вперёд синхронизировать (по умолчанию {DEFAULT_WEEKS_AHEAD})")
-    parser.add_argument("--subgroup", type=int, help="своя подгруппа (1/2) — занятия чужой подгруппы не попадут в календарь")
+    parser.add_argument("--list-subgroups", action="store_true",
+                        help="показать, какие предметы делятся на подгруппы, и выйти")
     parser.add_argument("--dry-run", action="store_true", help="показать, что было бы сделано, ничего не записывая")
     args = parser.parse_args()
 
@@ -449,7 +521,6 @@ def main() -> None:
               f"Найди свой: politeh_schedule.py --find-group <номер группы>", file=sys.stderr)
         sys.exit(1)
     weeks = args.weeks or config.get("weeks_ahead") or DEFAULT_WEEKS_AHEAD
-    my_subgroup = args.subgroup or config.get("subgroup")
 
     today = dt.date.today()
     first_monday = monday_of(today)
@@ -460,10 +531,14 @@ def main() -> None:
     for i in range(weeks):
         lessons.extend(fetch_week(int(group_id), first_monday + dt.timedelta(weeks=i)))
 
+    if args.list_subgroups:
+        report_subgroups(lessons)
+        return
+
     # Фильтруем ПОСЛЕ сбора всех недель, но ДО проверки на пустоту ниже:
-    # если фильтр выкосил всё (например, подгруппа указана неверно), это
+    # если фильтр выкосил всё (например, подгруппы указаны неверно), это
     # тоже повод ничего не удалять, а не повод стереть семестр.
-    lessons = filter_own_subgroup(lessons, my_subgroup)
+    lessons = filter_own_subgroup(lessons, config.get("subgroups"))
 
     if not lessons:
         # Пусто — это нормально в каникулы. Но пусто ТАКЖЕ выглядит падение
