@@ -162,6 +162,37 @@ def _subgroup_marker(note: str) -> str:
     return f"пг{m.group(1)}" if m else ""
 
 
+def filter_own_subgroup(lessons: list[dict], my_subgroup: Optional[int]) -> list[dict]:
+    """Убирает занятия чужой подгруппы.
+
+    ruz отдаёт расписание ГРУППЫ, а не человека: если лаба поделена на
+    «п/г 1» и «п/г 2», в ответе лежат обе, в один и тот же час, в разных
+    аудиториях. Без фильтра Михаил видит в календаре две пары одновременно
+    и не знает, какая его — один поход не в ту аудиторию, и календарю
+    перестают верить, а весь смысл был в том, чтобы не думать.
+
+    Занятия без маркера подгруппы (лекции потока и вообще всё неделёное)
+    остаются всегда — они общие.
+
+    Если подгруппа не задана в конфиге, ничего не фильтруем: лучше лишняя
+    пара в календаре, чем молча выкинутая своя. Первокурсник узнаёт свою
+    подгруппу только к началу занятий, до этого поля просто нет.
+    """
+    if not my_subgroup:
+        return lessons
+    mine = f"пг{int(my_subgroup)}"
+    kept, dropped = [], 0
+    for lesson in lessons:
+        marker = lesson.get("subgroup")
+        if not marker or marker == mine:
+            kept.append(lesson)
+        else:
+            dropped += 1
+    if dropped:
+        print(f"[расписание] отфильтровано занятий чужих подгрупп: {dropped}", file=sys.stderr)
+    return kept
+
+
 def _parse_lesson(raw: dict, day_date: dt.date) -> Optional[dict]:
     subject = (raw.get("subject") or raw.get("subject_short") or "").strip()
     time_start = raw.get("time_start")
@@ -403,6 +434,7 @@ def main() -> None:
     parser.add_argument("--find-group", metavar="ЗАПРОС", help="найти id группы по номеру и выйти")
     parser.add_argument("--group-id", type=int, help="id группы (иначе берётся из politeh_schedule.json)")
     parser.add_argument("--weeks", type=int, help=f"на сколько недель вперёд синхронизировать (по умолчанию {DEFAULT_WEEKS_AHEAD})")
+    parser.add_argument("--subgroup", type=int, help="своя подгруппа (1/2) — занятия чужой подгруппы не попадут в календарь")
     parser.add_argument("--dry-run", action="store_true", help="показать, что было бы сделано, ничего не записывая")
     args = parser.parse_args()
 
@@ -417,6 +449,7 @@ def main() -> None:
               f"Найди свой: politeh_schedule.py --find-group <номер группы>", file=sys.stderr)
         sys.exit(1)
     weeks = args.weeks or config.get("weeks_ahead") or DEFAULT_WEEKS_AHEAD
+    my_subgroup = args.subgroup or config.get("subgroup")
 
     today = dt.date.today()
     first_monday = monday_of(today)
@@ -426,6 +459,11 @@ def main() -> None:
     lessons: list[dict] = []
     for i in range(weeks):
         lessons.extend(fetch_week(int(group_id), first_monday + dt.timedelta(weeks=i)))
+
+    # Фильтруем ПОСЛЕ сбора всех недель, но ДО проверки на пустоту ниже:
+    # если фильтр выкосил всё (например, подгруппа указана неверно), это
+    # тоже повод ничего не удалять, а не повод стереть семестр.
+    lessons = filter_own_subgroup(lessons, my_subgroup)
 
     if not lessons:
         # Пусто — это нормально в каникулы. Но пусто ТАКЖЕ выглядит падение
