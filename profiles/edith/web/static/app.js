@@ -1,13 +1,36 @@
 'use strict';
 
-// Токен интерфейса лежит в localStorage, чтобы не вводить его каждый раз с
-// телефона. Это осознанный размен: устройство уже в tailnet, то есть своё;
-// защищаемся от чужих рук на своём телефоне, а не от сети.
+// Токен лежит И в localStorage, И в cookie на год. Михаил про то, что убивает
+// инструмент: «логин каждый раз это вообще пиздец». localStorage у PWA на
+// домашнем экране иногда живёт отдельно от вкладки браузера и чистится
+// агрессивнее — cookie это подстраховывает. Экран входа он должен увидеть
+// ровно один раз за устройство.
 const TOKEN_KEY = 'edith_ui_token';
 
-let token = localStorage.getItem(TOKEN_KEY) || '';
+function saveToken(t) {
+  try { localStorage.setItem(TOKEN_KEY, t); } catch {}
+  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(t)}; path=/; max-age=31536000; SameSite=Lax`;
+}
+function loadToken() {
+  try {
+    const v = localStorage.getItem(TOKEN_KEY);
+    if (v) return v;
+  } catch {}
+  const m = document.cookie.match(new RegExp(`(?:^|; )${TOKEN_KEY}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : '';
+}
+function clearToken() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch {}
+  document.cookie = `${TOKEN_KEY}=; path=/; max-age=0`;
+}
+
+const HOME_CACHE_KEY = 'edith_home_snapshot';
+
+let token = loadToken();
 let currentConv = null;
 let streaming = false;
+let recorder = null;
+let recordChunks = [];
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,8 +56,6 @@ function renderMarkdown(src) {
     .replace(/>/g, '&gt;');
 
   const blocks = [];
-  // Блоки кода прячем целиком, чтобы внутренние символы не поймались
-  // остальными правилами.
   s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
     blocks.push(`<pre><code>${code.replace(/\n$/, '')}</code></pre>`);
     return `\n\nBLOCK${blocks.length - 1}\n\n`;
@@ -52,7 +73,6 @@ function renderMarkdown(src) {
 
   s = renderTables(s);
 
-  // Списки: собираем подряд идущие пункты в один <ul>/<ol>.
   s = s.replace(/(?:^[-*]\s+.+$\n?)+/gm, (block) => {
     const items = block.trim().split('\n')
       .map((l) => `<li>${l.replace(/^[-*]\s+/, '')}</li>`).join('');
@@ -64,7 +84,6 @@ function renderMarkdown(src) {
     return `<ol>${items}</ol>`;
   });
 
-  // Остаток разбиваем на абзацы, не трогая уже готовые блоки.
   s = s.split(/\n{2,}/).map((chunk) => {
     const t = chunk.trim();
     if (!t) return '';
@@ -100,33 +119,168 @@ function renderTables(s) {
   return out.join('\n');
 }
 
+// -------------------------------------------------------------- приветствие
+
+/**
+ * Приветствие считается ЗДЕСЬ, по часам телефона, а не на сервере.
+ *
+ * Сервер живёт в CEST, профиль EDITH до сих пор в Asia/Krasnoyarsk, Михаил
+ * переезжает в Питер. Единственные часы, которым можно верить, — те, что у
+ * него в руке. Иначе приложение желало бы доброго утра в четыре ночи, как
+ * это уже грозит крону после переезда.
+ *
+ * Без вызова модели: экран открывается по десять раз в день, платить за
+ * строчку приветствия каждый раз — то самое расточительство, которое мы
+ * весь август вычищали.
+ */
+const GREETINGS = {
+  // ⚠️ Никаких конкретных часов в тексте («три часа ночи»): вариант
+  // выбирается на весь диапазон 0–5, и в четыре утра такая фраза врёт.
+  night:   ['Ты ещё не спишь', 'Глубокая ночь', 'Ночь на дворе', 'Не спится?'],
+  early:   ['Рано поднялся', 'Доброе утро', 'Ещё только светает', 'Раненько'],
+  morning: ['Доброе утро', 'С добрым утром', 'Утро', 'Ну что, поехали'],
+  day:     ['Добрый день', 'Как день', 'День в разгаре', 'Привет'],
+  evening: ['Добрый вечер', 'Вечер', 'Как прошёл день', 'Привет'],
+  late:    ['Поздний вечер', 'Пора закругляться', 'Уже поздно', 'Добрый вечер'],
+};
+
+function timeBucket(h) {
+  if (h < 5) return 'night';
+  if (h < 8) return 'early';
+  if (h < 12) return 'morning';
+  if (h < 17) return 'day';
+  if (h < 22) return 'evening';
+  return 'late';
+}
+
+function pickGreeting() {
+  const now = new Date();
+  const options = GREETINGS[timeBucket(now.getHours())];
+  // Меняется от открытия к открытию, но не дёргается при перерисовке
+  // внутри одной минуты.
+  const seed = Math.floor(now.getTime() / 60000);
+  return options[seed % options.length];
+}
+
+function eventTime(iso, allDay) {
+  if (allDay) return 'весь день';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+function buildSubline(data) {
+  const bits = [];
+  const events = (data.events || []).filter((e) => !e.all_day && new Date(e.start) > new Date());
+  if (events.length) {
+    bits.push(`ближайшее в ${eventTime(events[0].start, false)} — ${events[0].summary}`);
+  }
+  const overdue = (data.tasks || []).filter((t) => t.overdue).length;
+  const total = (data.tasks || []).length;
+  if (overdue) bits.push(`просрочено ${overdue}`);
+  else if (total) bits.push(`задач на сегодня: ${total}`);
+  return bits.join(', ');
+}
+
+// --------------------------------------------------------------- главный экран
+
+function renderHome(data) {
+  $('greeting-line').textContent = pickGreeting();
+  $('greeting-sub').textContent = data ? buildSubline(data) : '';
+
+  const events = (data && data.events) || [];
+  const tasks = (data && data.tasks) || [];
+
+  const evList = $('events-list');
+  evList.innerHTML = '';
+  events.slice(0, 5).forEach((e) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const time = document.createElement('span');
+    time.className = 'row-time';
+    time.textContent = eventTime(e.start, e.all_day);
+    const text = document.createElement('span');
+    text.className = 'row-text';
+    text.textContent = e.summary + (e.location ? ` · ${e.location}` : '');
+    row.append(time, text);
+    evList.appendChild(row);
+  });
+  $('events-block').classList.toggle('hidden', events.length === 0);
+
+  const taskList = $('tasks-list');
+  taskList.innerHTML = '';
+  tasks.slice(0, 6).forEach((t) => {
+    const row = document.createElement('div');
+    row.className = 'row' + (t.overdue ? ' overdue' : '');
+    const dot = document.createElement('span');
+    dot.className = 'row-dot';
+    const text = document.createElement('span');
+    text.className = 'row-text';
+    text.textContent = t.content;
+    row.append(dot, text);
+    // Тап по задаче — сразу вопрос про неё, без печатания.
+    row.onclick = () => { openChat(); $('input').value = `Про задачу «${t.content}»: `; $('input').focus(); };
+    taskList.appendChild(row);
+  });
+  $('tasks-block').classList.toggle('hidden', tasks.length === 0);
+
+  $('home-empty').classList.toggle('hidden', events.length > 0 || tasks.length > 0);
+}
+
+async function loadHome() {
+  // Сначала — мгновенно из снимка. Экран не ждёт сеть никогда.
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(HOME_CACHE_KEY) || 'null'); } catch {}
+  renderHome(cached);
+
+  try {
+    const res = await api('/api/home');
+    const data = await res.json();
+    try { localStorage.setItem(HOME_CACHE_KEY, JSON.stringify(data)); } catch {}
+    renderHome(data);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function openHome() {
+  $('home').classList.remove('hidden');
+  $('messages').classList.add('hidden');
+  $('conv-title').textContent = 'EDITH';
+  currentConv = null;
+  closeSidebar();
+  loadHome();
+}
+
+function openChat() {
+  $('home').classList.add('hidden');
+  $('messages').classList.remove('hidden');
+}
+
 // ------------------------------------------------------------------- сеть
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
     ...options,
-    headers: { 'Content-Type': 'application/json', 'X-UI-Token': token, ...(options.headers || {}) },
+    headers: { 'X-UI-Token': token, ...(options.headers || {}) },
   });
   if (res.status === 401) {
-    localStorage.removeItem(TOKEN_KEY);
+    clearToken();
     location.reload();
     throw new Error('unauthorized');
   }
   return res;
 }
 
-// --------------------------------------------------------------- интерфейс
+// --------------------------------------------------------------- сообщения
 
 function addMessage(role, content) {
   const wrap = document.createElement('div');
   wrap.className = `msg ${role}`;
   const body = document.createElement('div');
   body.className = 'msg-body';
-  if (role === 'assistant') {
-    body.innerHTML = renderMarkdown(content);
-  } else {
-    body.textContent = content;
-  }
+  if (role === 'assistant') body.innerHTML = renderMarkdown(content);
+  else body.textContent = content;
   wrap.appendChild(body);
   $('messages').appendChild(wrap);
   scrollDown();
@@ -136,11 +290,6 @@ function addMessage(role, content) {
 function scrollDown() {
   const m = $('messages');
   m.scrollTop = m.scrollHeight;
-}
-
-function showEmptyState() {
-  $('messages').innerHTML =
-    '<div class="empty-state">Спроси что-нибудь.<br>Это та же EDITH, что в Telegram — та же память и задачи.</div>';
 }
 
 async function loadConversations() {
@@ -160,12 +309,12 @@ async function loadConversations() {
     const del = document.createElement('button');
     del.className = 'conv-del';
     del.textContent = '×';
-    del.title = 'Удалить';
+    del.setAttribute('aria-label', 'Удалить разговор');
     del.onclick = async (e) => {
       e.stopPropagation();
       if (!confirm(`Удалить «${c.title}»?`)) return;
       await api(`/api/conversations/${c.id}`, { method: 'DELETE' });
-      if (currentConv === c.id) { currentConv = null; showEmptyState(); $('conv-title').textContent = 'EDITH'; }
+      if (currentConv === c.id) openHome();
       loadConversations();
     };
 
@@ -177,21 +326,13 @@ async function loadConversations() {
 async function openConversation(id, title) {
   currentConv = id;
   $('conv-title').textContent = title || 'EDITH';
+  openChat();
   closeSidebar();
   const res = await api(`/api/conversations/${id}/messages`);
   const { messages } = await res.json();
   $('messages').innerHTML = '';
-  if (!messages.length) showEmptyState();
   messages.forEach((m) => addMessage(m.role, m.content));
   loadConversations();
-}
-
-function newConversation() {
-  currentConv = null;
-  $('conv-title').textContent = 'EDITH';
-  showEmptyState();
-  closeSidebar();
-  $('input').focus();
 }
 
 function openSidebar() { $('sidebar').classList.add('open'); $('scrim').classList.remove('hidden'); }
@@ -203,17 +344,30 @@ async function send(text) {
   if (streaming) return;
   streaming = true;
   $('send').disabled = true;
+  openChat();
 
-  if (!$('messages').querySelector('.msg')) $('messages').innerHTML = '';
   addMessage('user', text);
 
   const body = addMessage('assistant', '');
-  body.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
-
+  // Живой статус: что делает и сколько уже думает. Михаил про долгие паузы —
+  // «ощущение, что она тупо хуйнёй страдает и тратит мои токены». Секундомер
+  // отвечает на это честно, не выдумывая занятий, которых не было.
+  const started = Date.now();
+  let statusText = 'думает';
   let answer = '';
+  const renderStatus = () => {
+    const sec = Math.round((Date.now() - started) / 1000);
+    body.innerHTML = `<div class="status"><span class="dots"><span></span><span></span><span></span></span>`
+      + `<span class="status-text"></span></div>`;
+    body.querySelector('.status-text').textContent = `${statusText} · ${sec}с`;
+  };
+  renderStatus();
+  const ticker = setInterval(() => { if (!answer) renderStatus(); }, 1000);
+
   try {
     const res = await api('/api/chat', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, conversation_id: currentConv }),
     });
 
@@ -226,7 +380,6 @@ async function send(text) {
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      // SSE-события разделены пустой строкой.
       const parts = buffer.split('\n\n');
       buffer = parts.pop();
       for (const part of parts) {
@@ -240,6 +393,9 @@ async function send(text) {
           const isNew = currentConv !== payload.conversation_id;
           currentConv = payload.conversation_id;
           if (isNew) loadConversations();
+        } else if (evMatch[1] === 'status') {
+          statusText = payload.text;
+          if (!answer) renderStatus();
         } else if (evMatch[1] === 'delta') {
           answer += payload.text;
           body.innerHTML = renderMarkdown(answer);
@@ -249,15 +405,91 @@ async function send(text) {
     }
   } catch (err) {
     console.error(err);
-    if (!answer) body.innerHTML = '<p>Связь с сервером оборвалась. Ответ мог сохраниться — обнови страницу.</p>';
+    if (!answer) body.innerHTML = '<p>Связь оборвалась. Ответ мог сохраниться — обнови страницу.</p>';
   } finally {
+    clearInterval(ticker);
     streaming = false;
     $('send').disabled = false;
-    if (!answer && !body.textContent.trim()) {
-      body.innerHTML = '<p>Пустой ответ.</p>';
-    }
+    if (!answer && !body.textContent.trim()) body.innerHTML = '<p>Пустой ответ.</p>';
     loadConversations();
   }
+}
+
+// ------------------------------------------------------------------- голос
+
+/**
+ * Запись голоса → Groq Whisper на сервере → текст в поле ввода.
+ *
+ * Не браузерное распознавание (Web Speech API): оно шлёт звук в Google, по-
+ * русски заметно хуже и в Firefox отсутствует. Groq у Михаила уже подключён
+ * как STT для голосовых в Telegram — тот же ключ.
+ *
+ * Текст попадает в поле, а НЕ отправляется сразу: распознавание иногда врёт,
+ * и увидеть это до отправки дешевле, чем получить ответ не на тот вопрос.
+ *
+ * ⚠️ Микрофон требует защищённого контекста: по обычному http:// на
+ * tailnet-адресе navigator.mediaDevices просто отсутствует. Поэтому сервис
+ * выставляется через `tailscale serve` (HTTPS с сертификатом на tailnet-
+ * домен) — см. docs/web-ui.md.
+ */
+function micAvailable() {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+}
+
+async function toggleRecording() {
+  if (!micAvailable()) {
+    alert('Микрофон недоступен: страница открыта не по HTTPS.\n\n' +
+          'Открой адрес вида https://<имя-машины>.<tailnet>.ts.net — см. docs/web-ui.md.');
+    return;
+  }
+
+  if (recorder && recorder.state === 'recording') {
+    recorder.stop();
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    alert('Не дали доступ к микрофону.');
+    return;
+  }
+
+  recordChunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => { if (e.data.size) recordChunks.push(e.data); };
+  recorder.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    $('mic').classList.remove('recording');
+    const blob = new Blob(recordChunks, { type: recorder.mimeType || 'audio/webm' });
+    if (blob.size < 1000) return;  // нажал и сразу отпустил — тишина
+
+    $('mic').classList.add('busy');
+    try {
+      const res = await api('/api/stt', {
+        method: 'POST',
+        headers: { 'Content-Type': blob.type },
+        body: blob,
+      });
+      const data = await res.json();
+      if (data.text) {
+        const input = $('input');
+        input.value = (input.value ? input.value + ' ' : '') + data.text;
+        input.dispatchEvent(new Event('input'));
+        input.focus();
+      } else {
+        alert(data.error || 'Не разобрала.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Распознавание не удалось.');
+    } finally {
+      $('mic').classList.remove('busy');
+    }
+  };
+  recorder.start();
+  $('mic').classList.add('recording');
 }
 
 // ------------------------------------------------------------------- старт
@@ -265,20 +497,19 @@ async function send(text) {
 function initApp() {
   $('gate').classList.add('hidden');
   $('app').classList.remove('hidden');
-  showEmptyState();
+  openHome();
   loadConversations();
 
   const input = $('input');
 
-  // Автовысота поля: одна строка по умолчанию, растёт под длинный текст.
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 180) + 'px';
   });
 
   // Enter отправляет, Shift+Enter — перенос. На телефоне Enter всегда
-  // переносит: там это единственный способ написать абзац, а кнопка
-  // отправки под большим пальцем.
+  // переносит: там это единственный способ написать абзац, а отправка —
+  // кнопка под большим пальцем.
   input.addEventListener('keydown', (e) => {
     const isMobile = window.matchMedia('(max-width: 760px)').matches;
     if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
@@ -296,30 +527,45 @@ function initApp() {
     send(text);
   });
 
-  $('new-chat').onclick = newConversation;
+  $('mic').onclick = toggleRecording;
+  if (!micAvailable()) $('mic').classList.add('unavailable');
+
+  $('new-chat').onclick = openHome;
+  $('home-btn').onclick = openHome;
   $('open-sidebar').onclick = openSidebar;
   $('close-sidebar').onclick = closeSidebar;
   $('scrim').onclick = closeSidebar;
+
+  // Вернулся во вкладку — обновить главный экран, если он открыт.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && !$('home').classList.contains('hidden')) loadHome();
+  });
 }
 
 async function tryToken(candidate) {
-  const res = await fetch('/api/conversations', { headers: { 'X-UI-Token': candidate } });
-  return res.ok;
+  try {
+    const res = await fetch('/api/conversations', { headers: { 'X-UI-Token': candidate } });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 (async function boot() {
   if (token && await tryToken(token)) {
+    saveToken(token);  // продлеваем cookie на год при каждом заходе
     initApp();
     return;
   }
-  localStorage.removeItem(TOKEN_KEY);
+  clearToken();
+  $('gate').classList.remove('hidden');
 
   const submit = async () => {
     const candidate = $('token-input').value.trim();
     if (!candidate) return;
     if (await tryToken(candidate)) {
       token = candidate;
-      localStorage.setItem(TOKEN_KEY, candidate);
+      saveToken(candidate);
       initApp();
     } else {
       $('gate-error').textContent = 'Неверный токен';

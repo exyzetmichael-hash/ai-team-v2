@@ -193,12 +193,86 @@ html, body {
   color: var(--text); font: inherit; font-size: 16px;
 }
 .composer textarea:focus { outline: none; border-color: var(--accent); }
-.composer button {
-  width: 42px; height: 42px; flex-shrink: 0;
+.composer #send {
+  width: 44px; height: 44px; flex-shrink: 0;
   border: none; border-radius: 50%; background: var(--accent);
   color: #fff; font-size: 20px; cursor: pointer;
 }
-.composer button:disabled { opacity: .4; cursor: default; }
+.composer #send:disabled { opacity: .4; cursor: default; }
+
+/* Микрофон — главная кнопка на телефоне. Михаил: «долго печатать».
+   44px это минимальный размер цели нажатия по WCAG; меньше делать нельзя,
+   в него не попадают большим пальцем на ходу. */
+.mic {
+  width: 44px; height: 44px; flex-shrink: 0;
+  border: 1px solid var(--border); border-radius: 50%;
+  background: var(--bg-input); color: var(--text);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background .15s, color .15s;
+}
+.mic:hover { border-color: var(--accent); }
+.mic.recording {
+  background: var(--danger); border-color: var(--danger); color: #fff;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.mic.busy { opacity: .5; pointer-events: none; }
+.mic.unavailable { opacity: .35; }
+@keyframes pulse { 50% { transform: scale(1.08); } }
+
+/* Статус во время ответа: что делает и сколько уже думает. */
+.status { display: flex; align-items: center; gap: 10px; color: var(--text-dim); }
+.status-text { font-size: 14px; }
+.dots { display: inline-flex; gap: 4px; }
+.dots span {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim);
+  animation: blink 1.3s infinite;
+}
+.dots span:nth-child(2) { animation-delay: .2s; }
+.dots span:nth-child(3) { animation-delay: .4s; }
+
+
+/* ---------- главный экран ---------- */
+
+.home { flex: 1; overflow-y: auto; padding: 28px 20px 20px; }
+
+.greeting { max-width: 760px; margin: 0 auto 26px; }
+.greeting h1 {
+  margin: 0 0 6px; font-size: 27px; font-weight: 600; letter-spacing: -0.3px;
+}
+.greeting-sub { margin: 0; color: var(--text-dim); font-size: 15px; }
+
+.block { max-width: 760px; margin: 0 auto 22px; }
+.block-title {
+  margin: 0 0 8px; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .8px; color: var(--text-dim);
+}
+
+.row {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 11px 12px; margin-bottom: 4px;
+  border-radius: 10px; background: var(--bg-raised);
+  cursor: pointer; font-size: 15px;
+  /* 44px минимальной высоты цели нажатия — по этим строкам он тыкает
+     большим пальцем на ходу. */
+  min-height: 44px;
+}
+.row:hover { background: var(--bg-input); }
+.row-time {
+  flex-shrink: 0; font-variant-numeric: tabular-nums;
+  color: var(--text-dim); font-size: 14px; min-width: 46px;
+}
+.row-text { flex: 1; overflow-wrap: anywhere; }
+.row-dot {
+  flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-dim); transform: translateY(-2px);
+}
+.row.overdue .row-dot { background: var(--danger); }
+.row.overdue .row-text { color: var(--text); }
+
+.home-empty {
+  max-width: 760px; margin: 12vh auto 0;
+  text-align: center; color: var(--text-dim); font-size: 15px;
+}
 
 /* ---------- мобильная раскладка ---------- */
 
@@ -213,4 +287,6 @@ html, body {
   }
   .sidebar.open { transform: translateX(0); }
   .msg.user .msg-body { max-width: 90%; }
+  .greeting h1 { font-size: 24px; }
+  .home { padding: 22px 16px 16px; }
 }

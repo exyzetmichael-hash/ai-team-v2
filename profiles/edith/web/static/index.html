@@ -8,17 +8,18 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>EDITH</title>
 <link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon.svg">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<!-- Экран входа. Tailscale уже пускает только свои устройства, но токен —
-     вторая линия: телефон в руках у кого-то ещё не должен открывать доступ
-     к почте, деньгам и задачам через EDITH. -->
-<div id="gate" class="gate">
+<!-- Экран входа. Показывается ОДИН раз за устройство: токен потом лежит и в
+     localStorage, и в cookie на год. Михаил: «логин каждый раз это вообще
+     пиздец» — значит второй раз этот экран он видеть не должен никогда. -->
+<div id="gate" class="gate hidden">
   <div class="gate-box">
     <h1>EDITH</h1>
-    <p>Введи токен интерфейса</p>
+    <p>Один раз — и больше не спросит</p>
     <input id="token-input" type="password" autocomplete="current-password" placeholder="токен">
     <button id="token-submit">Войти</button>
     <div id="gate-error" class="gate-error"></div>
@@ -40,12 +41,40 @@
     <header class="topbar">
       <button id="open-sidebar" class="icon-btn only-mobile" aria-label="Разговоры">☰</button>
       <div id="conv-title" class="conv-title">EDITH</div>
+      <button id="home-btn" class="icon-btn" aria-label="На главную">⌂</button>
     </header>
 
-    <div id="messages" class="messages"></div>
+    <!-- Главный экран. Рисуется мгновенно из сохранённого снимка, потом
+         молча обновляется свежими данными. -->
+    <div id="home" class="home">
+      <div class="greeting">
+        <h1 id="greeting-line">EDITH</h1>
+        <p id="greeting-sub" class="greeting-sub"></p>
+      </div>
+
+      <section id="events-block" class="block hidden">
+        <h2 class="block-title">Сегодня</h2>
+        <div id="events-list"></div>
+      </section>
+
+      <section id="tasks-block" class="block hidden">
+        <h2 class="block-title">Задачи</h2>
+        <div id="tasks-list"></div>
+      </section>
+
+      <div id="home-empty" class="home-empty hidden">Ничего срочного. Спрашивай.</div>
+    </div>
+
+    <div id="messages" class="messages hidden"></div>
 
     <form id="composer" class="composer">
-      <textarea id="input" rows="1" placeholder="Написать EDITH…" autocomplete="off"></textarea>
+      <button id="mic" type="button" class="mic" aria-label="Сказать голосом">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/>
+          <path fill="currentColor" d="M19 12a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 1 0-2 0 7 7 0 0 0 6 6.92V21a1 1 0 1 0 2 0v-2.08A7 7 0 0 0 19 12z"/>
+        </svg>
+      </button>
+      <textarea id="input" rows="1" placeholder="Написать или сказать…" autocomplete="off"></textarea>
       <button id="send" type="submit" aria-label="Отправить">↑</button>
     </form>
   </main>

@@ -50,6 +50,9 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 from urllib.parse import urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import home_data  # noqa: E402  (после sys.path — иначе не найдётся из systemd)
+
 EDITH_HOME = Path(os.environ.get("HERMES_HOME", "") or (Path.home() / ".hermes" / "profiles" / "edith"))
 CONFIG_PATH = EDITH_HOME / "web_ui.json"
 DB_PATH = EDITH_HOME / "web_ui.db"
@@ -186,8 +189,15 @@ def maybe_set_title(conv_id: int, first_user_message: str) -> None:
 # обращение к gateway EDITH
 # --------------------------------------------------------------------------
 
-def stream_from_hermes(cfg: dict, messages: list[dict]) -> Iterator[str]:
+def stream_from_hermes(cfg: dict, messages: list[dict]) -> Iterator[tuple[str, str]]:
     """Шлёт диалог в gateway и отдаёт куски ответа по мере поступления.
+
+    Отдаёт пары («delta», текст) и («status», что делает) — второе, когда
+    в потоке видно вызов инструмента.
+
+    Зачем статус: Михаил про долгие паузы — «ощущение, что она тупо хуйнёй
+    страдает и тратит мои токены». Строка «смотрю Todoist» снимает ровно
+    это: видно, что работа идёт и какая именно.
 
     Сначала пробуем стриминг: EDITH думает подолгу (память, инструменты,
     сабагенты), и молчащий экран все эти секунды выглядит как поломка.
@@ -224,10 +234,21 @@ def stream_from_hermes(cfg: dict, messages: list[dict]) -> Iterator[str]:
                     chunk = json.loads(payload)
                 except json.JSONDecodeError:
                     continue
-                delta = (chunk.get("choices") or [{}])[0].get("delta", {}).get("content")
+                delta_obj = (chunk.get("choices") or [{}])[0].get("delta", {}) or {}
+
+                # Вызовы инструментов приходят в том же потоке отдельным
+                # полем. Точный формат у Hermes живьём не проверен, поэтому
+                # разбор защитный: не нашли имя — просто молчим, а не
+                # выдумываем, чем она занята.
+                for call in (delta_obj.get("tool_calls") or []):
+                    name = ((call.get("function") or {}).get("name") or "").strip()
+                    if name:
+                        yield "status", _tool_label(name)
+
+                delta = delta_obj.get("content")
                 if delta:
                     got_anything = True
-                    yield delta
+                    yield "delta", delta
             if got_anything:
                 return
     except urllib.error.HTTPError as exc:
@@ -239,7 +260,33 @@ def stream_from_hermes(cfg: dict, messages: list[dict]) -> Iterator[str]:
     yield from _fallback_from_hermes(cfg, messages)
 
 
-def _fallback_from_hermes(cfg: dict, messages: list[dict]) -> Iterator[str]:
+# Человеческие подписи для инструментов. Незнакомый инструмент показываем
+# как есть — честнее, чем прятать за общим «работаю».
+_TOOL_LABELS = {
+    "todoist": "смотрю задачи",
+    "calendar": "смотрю календарь",
+    "gmail": "смотрю почту",
+    "mail": "смотрю почту",
+    "sheets": "смотрю таблицу",
+    "browser": "открываю страницу",
+    "web": "ищу в вебе",
+    "search": "ищу",
+    "memory": "вспоминаю",
+    "delegate": "запустила помощников",
+    "terminal": "выполняю команду",
+    "skill": "загружаю инструкцию",
+}
+
+
+def _tool_label(name: str) -> str:
+    low = name.lower()
+    for needle, label in _TOOL_LABELS.items():
+        if needle in low:
+            return label
+    return name
+
+
+def _fallback_from_hermes(cfg: dict, messages: list[dict]) -> Iterator[tuple[str, str]]:
     body = json.dumps({
         "model": cfg["model"],
         "messages": messages,
@@ -259,16 +306,16 @@ def _fallback_from_hermes(cfg: dict, messages: list[dict]) -> Iterator[str]:
             data = json.loads(resp.read().decode("utf-8"))
         content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
         if content:
-            yield content
+            yield "delta", content
         else:
-            yield "EDITH вернула пустой ответ."
+            yield "delta", "EDITH вернула пустой ответ."
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:500]
         print(f"[веб] gateway ответил {exc.code}: {detail}", file=sys.stderr)
-        yield f"Не получилось достучаться до EDITH (HTTP {exc.code}). Подробности в journalctl."
+        yield "delta", f"Не получилось достучаться до EDITH (HTTP {exc.code}). Подробности в journalctl."
     except Exception as exc:
         print(f"[веб] запрос к gateway упал: {exc}", file=sys.stderr)
-        yield "Не получилось достучаться до EDITH. Похоже, gateway не отвечает."
+        yield "delta", "Не получилось достучаться до EDITH. Похоже, gateway не отвечает."
 
 
 # --------------------------------------------------------------------------
@@ -334,6 +381,9 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authorized():
                 self._json(401, {"error": "unauthorized"})
                 return
+            if path == "/api/home":
+                self._json(200, home_data.get_home())
+                return
             if path == "/api/conversations":
                 self._json(200, {"conversations": list_conversations()})
                 return
@@ -362,7 +412,32 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_chat()
             return
 
+        if path == "/api/stt":
+            self._handle_stt()
+            return
+
         self._json(404, {"error": "not found"})
+
+    def _handle_stt(self) -> None:
+        """Аудио из браузера → текст. Тело запроса — сырой звук, не JSON."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._json(400, {"error": "bad length"})
+            return
+        # 25 МБ — потолок Groq. Своя проверка нужна, чтобы не читать в
+        # память гигабайт, если что-то пойдёт не так на стороне браузера.
+        if length <= 0 or length > 25 * 1024 * 1024:
+            self._json(400, {"error": "empty or too large"})
+            return
+
+        audio = self.rfile.read(length)
+        ext = "webm" if "webm" in (self.headers.get("Content-Type") or "") else "m4a"
+        text, error = home_data.transcribe(audio, filename=f"voice.{ext}")
+        if error:
+            self._json(502, {"error": error})
+            return
+        self._json(200, {"text": text})
 
     def do_DELETE(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -430,7 +505,11 @@ class Handler(BaseHTTPRequestHandler):
 
         collected: list[str] = []
         client_alive = True
-        for piece in stream_from_hermes(self.config, upstream_messages):
+        for kind, piece in stream_from_hermes(self.config, upstream_messages):
+            if kind == "status":
+                if client_alive:
+                    client_alive = send_event("status", {"text": piece})
+                continue
             collected.append(piece)
             if client_alive:
                 client_alive = send_event("delta", {"text": piece})
@@ -460,6 +539,9 @@ def main() -> None:
     cfg = load_config()
     Handler.config = cfg
     init_db()
+    # Прогреваем главный экран заранее: первое открытие после рестарта не
+    # должно упираться в поход в Todoist и Calendar.
+    home_data.warm_cache()
     print(f"[веб] слушаю http://{cfg['host']}:{cfg['port']}", file=sys.stderr)
     ThreadingHTTPServer((cfg["host"], cfg["port"]), Handler).serve_forever()
 
