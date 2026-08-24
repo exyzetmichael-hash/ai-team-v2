@@ -41,7 +41,13 @@ EDITH_HOME = Path(os.environ.get("HERMES_HOME", "") or (Path.home() / ".hermes" 
 TOKEN_PATH = EDITH_HOME / "google_token.json"
 ENV_PATH = EDITH_HOME / ".env"
 
-TODOIST_API = "https://api.todoist.com/rest/v2/tasks"
+# ⚠️ 2026-08-24: Todoist убрал REST v2 (410 Gone на /rest/v2/*), новый
+# эндпоинт /api/v1/* — унифицированный с Sync API, и ответ там ОБЁРНУТ в
+# {"results": [...], "next_cursor": ...}, а не голый массив, как раньше.
+# Живьём поймано: без этого код падал в `except: return []` молча — экран
+# показывал бы «задач нет» вместо реальной ошибки, ту же грабли, что уже
+# однажды сработала с фильтром «назначено мне» (см. докстринг ниже).
+TODOIST_API = "https://api.todoist.com/api/v1/tasks"
 HTTP_TIMEOUT = 12
 
 # Свежесть кэша. 90 секунд — компромисс: задачу, добавленную в телефоне
@@ -88,7 +94,7 @@ def fetch_tasks() -> list[dict]:
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-            raw = json.loads(resp.read().decode("utf-8"))
+            raw = json.loads(resp.read().decode("utf-8")).get("results", [])
     except Exception as exc:
         print(f"[веб] Todoist недоступен: {exc}", file=sys.stderr)
         return []
