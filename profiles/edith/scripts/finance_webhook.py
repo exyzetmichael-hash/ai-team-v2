@@ -60,6 +60,15 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
+
+# Деньги считаются по календарю Михаила (Питер), не по поясу сервера.
+# ⚠️ Не sys.date.today() — сервер живёт в CEST, разница с Москвой всего час,
+# но у бюджетного сторожа (budget_watchdog.py) день/неделя/месяц считаются
+# по Europe/Moscow, и трата, записанная с датой сервера, у границы суток
+# попадала бы не в тот день. Тот же принцип, что и явный пояс в
+# politeh_schedule.py — TZ никогда не берётся из окружения.
+MONEY_TZ = ZoneInfo("Europe/Moscow")
 
 EDITH_HOME = Path(os.environ.get("HERMES_HOME", "") or (Path.home() / ".hermes" / "profiles" / "edith"))
 TOKEN_PATH = EDITH_HOME / "google_token.json"
@@ -279,7 +288,7 @@ def append_operation(spreadsheet_id: str, op: dict) -> None:
     # Колонки листа «Операции»: Дата | Тип | Категория | Сумма | Комментарий |
     # Источник дохода (см. docs/finance-sheet-spec.md).
     row = [
-        dt.date.today().isoformat(),
+        dt.datetime.now(MONEY_TZ).date().isoformat(),
         op["type"],
         op["category"],
         op["amount"],
