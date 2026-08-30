@@ -127,6 +127,15 @@ _AMOUNT_RE = re.compile(
 _INCOME_MARKERS = ["зачислен", "пополнен", "поступил", "возврат", "перевод от", "кэшбэк", "кешбэк", "аванс", "зарплат"]
 _EXPENSE_MARKERS = ["покупк", "оплат", "списан", "снятие", "перевод на", "платёж", "платеж"]
 
+# ⚠️ Живые данные 2026-08-29 (Сбербанк): сумма и направление лежат в title,
+# не в text, и направление — не слово, а эмодзи в самом начале строки:
+# «➕ 1 000 ₽ по СБП от МИХАИЛ ОЛЕГОВИЧ Ю.» / «➖ 648 ₽ FRIKADELNIA_EURO».
+# text у Сбера — это остаток и цифры карты («📈 1 015,68 ₽ •• 0946»), там
+# денег на распознавание нет вообще. Без этого блока НИ ОДНА сберовская
+# операция не проходила бы — уходили бы в unparsed молча.
+_EMOJI_DIRECTION_RE = re.compile(r"^\s*(➕|➖)\s*")
+_SBP_SENDER_RE = re.compile(r"^по\s+СБП(?:\s+от)?\s*", re.IGNORECASE)
+
 # Хвост уведомления, который продавцом быть не может: всё начиная с
 # «Баланс: ...». Режем именно с этих слов, и только с них — раньше сюда
 # входила ещё и «Карта», но она стоит в НАЧАЛЕ уведомления, и хвост
@@ -204,7 +213,42 @@ def categorize(merchant: str, rules: dict) -> str:
     return "Прочее"
 
 
-def parse_notification(text: str, rules: dict) -> Optional[dict]:
+def _parse_emoji_title(title: str, rules: dict) -> Optional[dict]:
+    """Формат Сбербанка: «➕/➖ <сумма> ₽ <получатель/продавец>» в title.
+
+    Проверяется первым, до общей логики по тексту — у Сбера в text денег
+    нет вообще (только остаток), а в title направление задано эмодзи, не
+    словом, так что общие маркеры _INCOME_MARKERS/_EXPENSE_MARKERS его не
+    поймают.
+    """
+    m = _EMOJI_DIRECTION_RE.match(title or "")
+    if not m:
+        return None
+    direction = "Доход" if m.group(1) == "➕" else "Расход"
+
+    rest = title[m.end():].strip()
+    amount_match = _AMOUNT_RE.search(rest)
+    if not amount_match:
+        return None
+    amount = _norm_amount(amount_match.group(1))
+    if amount is None or amount <= 0:
+        return None
+
+    merchant = _AMOUNT_RE.sub("", rest).strip(" .,;")
+    merchant = _SBP_SENDER_RE.sub("", merchant).strip()  # «по СБП от ИМЯ» -> «ИМЯ»
+    if not merchant:
+        merchant = "Сбербанк"
+
+    return {
+        "type": direction,
+        "amount": amount,
+        "merchant": merchant,
+        "category": categorize(merchant, rules) if direction == "Расход" else "",
+        "raw": title,
+    }
+
+
+def parse_notification(text: str, rules: dict, title: str = "") -> Optional[dict]:
     """Текст пуша → операция, или None если не разобралось.
 
     None здесь — нормальный исход, а не ошибка: уведомление могло быть
@@ -212,6 +256,10 @@ def parse_notification(text: str, rules: dict) -> Optional[dict]:
     в UNPARSED_LOG на разбор человеком, но в таблицу не попадает никогда —
     мусор в журнале операций хуже, чем пропущенная трата.
     """
+    emoji_result = _parse_emoji_title(title, rules)
+    if emoji_result:
+        return emoji_result
+
     if not text:
         return None
 
@@ -357,7 +405,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         text = (payload.get("text") or "").strip()
-        payload.setdefault("received_at", dt.datetime.now().isoformat(timespec="seconds"))
+        title = (payload.get("title") or "").strip()
+        # MONEY_TZ, не серверный локальный — иначе received_at путает при
+        # диагностике (сервер в CEST, на час позади Москвы), хоть в саму
+        # таблицу это поле и не попадает (там дата уже по MONEY_TZ отдельно).
+        payload.setdefault("received_at", dt.datetime.now(MONEY_TZ).isoformat(timespec="seconds"))
 
         with _write_lock:
             # Сырое пишем ВСЕГДА и первым делом — до любой попытки разбора.
@@ -377,7 +429,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._reply(200, {"ok": True, "status": "raw_only"})
                 return
 
-            op = parse_notification(text, self.rules)
+            op = parse_notification(text, self.rules, title=title)
             if op is None:
                 _append_jsonl(UNPARSED_LOG, payload)
                 seen.append(nid)
@@ -411,13 +463,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Приёмник банковских уведомлений")
     parser.add_argument("--host", default=None, help="адрес прослушивания (по умолчанию из конфига)")
     parser.add_argument("--port", type=int, default=None, help="порт (по умолчанию из конфига или 8765)")
-    parser.add_argument("--test-parse", metavar="ТЕКСТ", help="разобрать текст уведомления и выйти")
+    parser.add_argument("--test-parse", metavar="ТЕКСТ", help="разобрать text уведомления и выйти")
+    parser.add_argument("--test-title", metavar="ЗАГОЛОВОК", default="",
+                        help="title уведомления для --test-parse (у Сбербанка сумма именно тут)")
     args = parser.parse_args()
 
     rules = load_rules()
 
     if args.test_parse:
-        result = parse_notification(args.test_parse, rules)
+        result = parse_notification(args.test_parse, rules, title=args.test_title)
         print(json.dumps(result, ensure_ascii=False, indent=2) if result else "не разобралось")
         return
 
