@@ -136,6 +136,22 @@ _EXPENSE_MARKERS = ["покупк", "оплат", "списан", "снятие"
 _EMOJI_DIRECTION_RE = re.compile(r"^\s*(➕|➖)\s*")
 _SBP_SENDER_RE = re.compile(r"^по\s+СБП(?:\s+от)?\s*", re.IGNORECASE)
 
+# ⚠️ Живые данные 2026-08-30 (Альфа-Банк, входящий перевод с чужого банка):
+# «Перевод на сумму 1.00 RUR из Т-Банк от МИХАИЛ Ю. по СБП.» — это ЗАЧИСЛЕНИЕ
+# (банк-получатель описывает, откуда пришли деньги), но фраза «перевод на»
+# внутри неё совпадает с _EXPENSE_MARKERS, и без этой проверки такой
+# перевод классифицировался бы как расход — хуже, чем «не распозналось»,
+# потому что это НЕВЕРНАЯ запись в таблице, а не пропуск. Отличительный
+# признак именно входящего перевода — связка «на сумму ... из ... от»:
+# исходящий перевод так не формулируется («Перевод на карту 1234, 500 ₽»
+# не содержит «из»/«от» в этом сочетании).
+_INCOMING_TRANSFER_RE = re.compile(
+    r"перевод\s+на\s+сумму.{0,40}?\bиз\b.{0,60}?\bот\b", re.IGNORECASE | re.DOTALL,
+)
+_INCOMING_TRANSFER_SENDER_RE = re.compile(
+    r"^.*?\bот\s+(.+?)(?:\s+по\s+СБП)?\s*\.?\s*$", re.IGNORECASE | re.DOTALL,
+)
+
 # Хвост уведомления, который продавцом быть не может: всё начиная с
 # «Баланс: ...». Режем именно с этих слов, и только с них — раньше сюда
 # входила ещё и «Карта», но она стоит в НАЧАЛЕ уведомления, и хвост
@@ -269,6 +285,19 @@ def parse_notification(text: str, rules: dict, title: str = "") -> Optional[dict
     amount = _norm_amount(amount_match.group(1))
     if amount is None or amount <= 0:
         return None
+
+    # Проверяем ДО общих маркеров: «перевод на» ниже в _EXPENSE_MARKERS,
+    # а «Перевод на сумму ... из ... от» — это зачисление, не списание.
+    if _INCOMING_TRANSFER_RE.search(text):
+        sender_match = _INCOMING_TRANSFER_SENDER_RE.match(text)
+        merchant = sender_match.group(1).strip(" .,;") if sender_match else _guess_merchant(text)
+        return {
+            "type": "Доход",
+            "amount": amount,
+            "merchant": merchant or _guess_merchant(text),
+            "category": "",
+            "raw": text,
+        }
 
     direction = _detect_direction(text)
     if direction is None:
