@@ -184,9 +184,51 @@ function buildSubline(data) {
 
 // --------------------------------------------------------------- главный экран
 
+function money(n) {
+  return Math.round(n).toLocaleString('ru-RU') + ' ₽';
+}
+
+function renderStats(data) {
+  const m = data && data.money;
+  const mail = data && data.mail;
+
+  const moneyCard = $('money-card');
+  if (m) {
+    $('money-value').textContent = money(m.spent_month);
+    let sub = 'потрачено в этом месяце';
+    let tone = 'ok';
+    if (m.over_limit && m.over_limit.length) {
+      sub = `превышен лимит: ${m.over_limit.join(', ')}`;
+      tone = 'danger';
+    } else if (m.near_limit && m.near_limit.length) {
+      sub = `близко к лимиту: ${m.near_limit.join(', ')}`;
+      tone = 'warn';
+    }
+    $('money-sub').textContent = sub;
+    moneyCard.classList.remove('hidden', 'tone-ok', 'tone-warn', 'tone-danger');
+    moneyCard.classList.add(`tone-${tone}`);
+    moneyCard.onclick = () => { openChat(); $('input').value = 'Как у меня с тратами в этом месяце? '; $('input').focus(); };
+  } else {
+    moneyCard.classList.add('hidden');
+  }
+
+  const mailCard = $('mail-card');
+  if (mail && mail.unread > 0) {
+    $('mail-value').textContent = mail.unread;
+    mailCard.classList.remove('hidden');
+    mailCard.onclick = () => { openChat(); $('input').value = 'Что у меня непрочитанного в почте? '; $('input').focus(); };
+  } else {
+    mailCard.classList.add('hidden');
+  }
+
+  $('stats-block').classList.toggle('hidden', !(m || (mail && mail.unread > 0)));
+}
+
 function renderHome(data) {
   $('greeting-line').textContent = pickGreeting();
   $('greeting-sub').textContent = data ? buildSubline(data) : '';
+
+  renderStats(data);
 
   const events = (data && data.events) || [];
   const tasks = (data && data.tasks) || [];
@@ -224,7 +266,8 @@ function renderHome(data) {
   });
   $('tasks-block').classList.toggle('hidden', tasks.length === 0);
 
-  $('home-empty').classList.toggle('hidden', events.length > 0 || tasks.length > 0);
+  const hasStats = !$('stats-block').classList.contains('hidden');
+  $('home-empty').classList.toggle('hidden', events.length > 0 || tasks.length > 0 || hasStats);
 }
 
 async function loadHome() {

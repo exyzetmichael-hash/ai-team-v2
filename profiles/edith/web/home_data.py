@@ -40,6 +40,13 @@ from typing import Any, Optional
 EDITH_HOME = Path(os.environ.get("HERMES_HOME", "") or (Path.home() / ".hermes" / "profiles" / "edith"))
 TOKEN_PATH = EDITH_HOME / "google_token.json"
 ENV_PATH = EDITH_HOME / ".env"
+FINANCE_CONFIG_PATH = EDITH_HOME / "finance_webhook.json"
+
+try:
+    from zoneinfo import ZoneInfo
+    MONEY_TZ = ZoneInfo("Europe/Moscow")
+except Exception:  # pragma: no cover — на всякий случай, если tzdata нет
+    MONEY_TZ = None
 
 # ⚠️ 2026-08-24: Todoist убрал REST v2 (410 Gone на /rest/v2/*), новый
 # эндпоинт /api/v1/* — унифицированный с Sync API, и ответ там ОБЁРНУТ в
@@ -180,6 +187,140 @@ def fetch_today_events() -> list[dict]:
 
 
 # --------------------------------------------------------------------------
+# Деньги и почта (главный экран, 2026-09-01)
+# --------------------------------------------------------------------------
+
+def _google_service(name: str, version: str):
+    """Общий билдер для Sheets/Gmail — тот же токен, что и у Calendar.
+
+    ⚠️ Токен изначально выпущен узким (`--services calendar`, см.
+    docs/phase-2-runbook.md — сознательное решение «без лишних разрешений»).
+    Если Sheets/Gmail отсюда падают с 403 — это не баг, а токену не хватает
+    scope. Чинится не руками, а тем же диалоговым способом, каким заводился
+    Calendar: попросить EDITH расширить доступ (Sheets read + Gmail read),
+    см. docs/web-ui.md. До тех пор соответствующий блок на экране просто не
+    показывается — ровно тот же принцип, что и у пустых «Задач»/«Сегодня».
+    """
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+    if not TOKEN_PATH.exists():
+        return None
+    creds = Credentials.from_authorized_user_file(str(TOKEN_PATH))
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        else:
+            return None
+    return build(name, version, credentials=creds, cache_discovery=False)
+
+
+def _spreadsheet_id() -> str:
+    """ID финансовой таблицы — берём из конфига вебхука, не дублируем.
+
+    Вебхук сейчас не в фокусе (docs/weekly-statements.md), но файл с его
+    конфигом остаётся источником правды для id таблицы: заводить второй
+    такой же конфиг только ради главного экрана незачем.
+    """
+    try:
+        cfg = json.loads(FINANCE_CONFIG_PATH.read_text(encoding="utf-8"))
+        return cfg.get("spreadsheet_id") or ""
+    except Exception:
+        return ""
+
+
+def _parse_amount(raw: str) -> Optional[float]:
+    try:
+        return float(str(raw).replace("\xa0", "").replace(" ", "").replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_money() -> Optional[dict]:
+    """Траты этого месяца + категории у лимита. None — таблица недоступна.
+
+    Месяц считается в Europe/Moscow (тот же принцип, что у budget_watchdog.py
+    и finance_webhook.py — деньги никогда не считаются по времени сервера).
+    """
+    sheet_id = _spreadsheet_id()
+    if not sheet_id or MONEY_TZ is None:
+        return None
+    try:
+        service = _google_service("sheets", "v4")
+        if service is None:
+            return None
+        values = service.spreadsheets().values()
+        ops = values.get(spreadsheetId=sheet_id, range="Операции!A2:F").execute().get("values", [])
+        limits = values.get(spreadsheetId=sheet_id, range="Лимиты!A2:D").execute().get("values", [])
+    except Exception as exc:
+        print(f"[веб] финансовая таблица недоступна: {exc}", file=sys.stderr)
+        return None
+
+    today = dt.datetime.now(MONEY_TZ).date()
+    month_start = today.replace(day=1)
+
+    spent_by_cat: dict[str, float] = {}
+    spent_month = 0.0
+    income_month = 0.0
+    for row in ops:
+        if len(row) < 4:
+            continue
+        date_raw, typ, cat = row[0], row[1], row[2]
+        amount = _parse_amount(row[3])
+        if amount is None:
+            continue
+        try:
+            date = dt.date.fromisoformat(str(date_raw)[:10])
+        except ValueError:
+            continue
+        if not (month_start <= date <= today):
+            continue
+        if typ == "Расход":
+            spent_month += amount
+            spent_by_cat[cat] = spent_by_cat.get(cat, 0.0) + amount
+        elif typ == "Доход":
+            income_month += amount
+
+    over_limit: list[str] = []
+    near_limit: list[str] = []
+    for row in limits:
+        if len(row) < 4:
+            continue
+        cat = row[0]
+        limit_month = _parse_amount(row[3]) or 0.0
+        if limit_month <= 0:
+            continue
+        ratio = spent_by_cat.get(cat, 0.0) / limit_month
+        if ratio >= 1.0:
+            over_limit.append(cat)
+        elif ratio >= 0.9:
+            near_limit.append(cat)
+
+    return {
+        "spent_month": round(spent_month),
+        "income_month": round(income_month),
+        "over_limit": over_limit,
+        "near_limit": near_limit,
+    }
+
+
+def fetch_mail() -> Optional[dict]:
+    """Число непрочитанных во входящих. None — Gmail недоступен."""
+    try:
+        service = _google_service("gmail", "v1")
+        if service is None:
+            return None
+        resp = service.users().messages().list(
+            userId="me", q="is:unread in:inbox", maxResults=1,
+        ).execute()
+        return {"unread": resp.get("resultSizeEstimate", 0)}
+    except Exception as exc:
+        print(f"[веб] Gmail недоступен (возможно не хватает scope): {exc}", file=sys.stderr)
+        return None
+
+
+# --------------------------------------------------------------------------
 # сборка и кэш
 # --------------------------------------------------------------------------
 
@@ -187,6 +328,8 @@ def _build() -> dict:
     return {
         "tasks": fetch_tasks(),
         "events": fetch_today_events(),
+        "money": fetch_money(),
+        "mail": fetch_mail(),
         "fetched_at": dt.datetime.now().isoformat(timespec="seconds"),
     }
 
