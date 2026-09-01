@@ -188,6 +188,10 @@ function money(n) {
   return Math.round(n).toLocaleString('ru-RU') + ' ₽';
 }
 
+function openFromCard(prefill) {
+  return () => { openChat(); $('input').value = prefill; $('input').focus(); };
+}
+
 function renderStats(data) {
   const m = data && data.money;
   const mail = data && data.mail;
@@ -195,19 +199,17 @@ function renderStats(data) {
   const moneyCard = $('money-card');
   if (m) {
     $('money-value').textContent = money(m.spent_month);
-    let sub = 'потрачено в этом месяце';
-    let tone = 'ok';
+    const badge = $('money-badge');
+    let tone = 'ok', text = 'в пределах лимитов';
     if (m.over_limit && m.over_limit.length) {
-      sub = `превышен лимит: ${m.over_limit.join(', ')}`;
-      tone = 'danger';
+      tone = 'danger'; text = `превышено: ${m.over_limit.join(', ')}`;
     } else if (m.near_limit && m.near_limit.length) {
-      sub = `близко к лимиту: ${m.near_limit.join(', ')}`;
-      tone = 'warn';
+      tone = 'warn'; text = `близко: ${m.near_limit.join(', ')}`;
     }
-    $('money-sub').textContent = sub;
-    moneyCard.classList.remove('hidden', 'tone-ok', 'tone-warn', 'tone-danger');
-    moneyCard.classList.add(`tone-${tone}`);
-    moneyCard.onclick = () => { openChat(); $('input').value = 'Как у меня с тратами в этом месяце? '; $('input').focus(); };
+    badge.textContent = text;
+    badge.className = `stat-badge tone-${tone}`;
+    moneyCard.classList.remove('hidden');
+    moneyCard.onclick = openFromCard('Как у меня с тратами в этом месяце? ');
   } else {
     moneyCard.classList.add('hidden');
   }
@@ -216,7 +218,7 @@ function renderStats(data) {
   if (mail && mail.unread > 0) {
     $('mail-value').textContent = mail.unread;
     mailCard.classList.remove('hidden');
-    mailCard.onclick = () => { openChat(); $('input').value = 'Что у меня непрочитанного в почте? '; $('input').focus(); };
+    mailCard.onclick = openFromCard('Что у меня непрочитанного в почте? ');
   } else {
     mailCard.classList.add('hidden');
   }
@@ -572,6 +574,15 @@ function initApp() {
 
   $('mic').onclick = toggleRecording;
   if (!micAvailable()) $('mic').classList.add('unavailable');
+
+  // Карточки денег/почты — div с role="button": клик уже вешается в
+  // renderStats, здесь только клавиатура (Enter/Space), т.к. div сам по
+  // себе на них не реагирует, в отличие от настоящей <button>.
+  document.querySelectorAll('.stat-card').forEach((card) => {
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); }
+    });
+  });
 
   $('new-chat').onclick = openHome;
   $('home-btn').onclick = openHome;
