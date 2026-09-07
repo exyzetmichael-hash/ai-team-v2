@@ -154,6 +154,18 @@ agent:
     # это один голос.
     # vision оставлена включённой — Google-таблица финансов может
     # потребовать распознать чек с фото.
+  # 2026-09-07: дефолт основного диалога — НЕ max/ultra. Reasoning-токены
+  # GPT-5.x биллятся как completion по полной цене на КАЖДОЕ сообщение;
+  # жать максимум даже на «который час» — та самая бессмысленная трата,
+  # которую и разбирали. high заметно сильнее необъявленного дефолта
+  # (medium), без цены максимума на рутине.
+  #
+  # ⚠️ Для реально трудной задачи (матан/линал/ML, разбор кода) — точечно:
+  # "/reasoning max" в Telegram/веб-чате поднимает эффорт для ТЕКУЩЕЙ
+  # сессии (без --global конфиг не трогает), "/reasoning high" возвращает
+  # обратно. Дорогой режим включается осознанно на минуты, не висит на
+  # каждой реплике постоянно.
+  reasoning_effort: high
 
 # Ручное подтверждение по-настоящему опасных команд (rm -rf, форк-бомбы и
 # т.п. из встроенного списка Hermes) — раз есть terminal (нужен для
@@ -405,18 +417,40 @@ skills:
 #     потом решаем по данным, а не по догадке.
 #   vision — нужна модель с поддержкой картинок, mini не подойдёт.
 #
-# Модель та же, что уже стоит в fallback_model — проверена в бою (реально
-# обслуживала запросы, когда основной провайдер отваливался).
+# ⚠️ 2026-09-07: переведено с gpt-5.4-mini на luna. Комментарий выше про
+# «та же модель, что в fallback_model» устарел — luna с тех пор подешевела
+# на OpenRouter на 80% и стала ДЕШЕВЛЕ mini по всем трём тарифам (prompt/
+# completion/cache-read), не только основной моделью диалога. Аудит
+# token_audit.py + разбор логов подтвердил: background_review молотит
+# 30-60К токенов контекста несколько раз в день и на mini стоил $1.72/мес;
+# на luna та же нагрузка вышла бы ~$0.46.
+#
+# reasoning_effort: minimal — ОБЯЗАТЕЛЬНО, не косметика. Luna — reasoning-
+# модель с активным по умолчанию рассуждением (сама видела ~19К токенов
+# reasoning за неделю основного диалога); без явного минимума механические
+# вызовы (категоризация, заголовок, ревью) тихо получили бы новую статью
+# расхода на рассуждение, которого у mini не было вовсе. Заменили одну
+# скрытую трату другой было бы шагом назад, а не экономией.
+#
+# Бонус, не главная причина: раньше bg-review на mini иногда падал с HTTP
+# 404 "encrypted reasoning content produced under a different model" —
+# история диалога содержит зашифрованные reasoning-блоки luna, а mini не
+# может их переиграть. Одна модель для истории и для ревью убирает этот
+# класс ошибки структурно.
 auxiliary:
   title_generation:
     provider: openrouter
-    model: openai/gpt-5.4-mini
+    model: openai/gpt-5.6-luna
+    reasoning_effort: minimal
   background_review:
     provider: openrouter
-    model: openai/gpt-5.4-mini
+    model: openai/gpt-5.6-luna
+    reasoning_effort: minimal
   memory_query_rewrite:
     provider: openrouter
-    model: openai/gpt-5.4-mini
+    model: openai/gpt-5.6-luna
+    reasoning_effort: minimal
   web_extract:
     provider: openrouter
-    model: openai/gpt-5.4-mini
+    model: openai/gpt-5.6-luna
+    reasoning_effort: minimal
