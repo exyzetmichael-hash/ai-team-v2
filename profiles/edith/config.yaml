@@ -47,7 +47,13 @@ model:
   # существовала на момент обучения модели, которая пишет этот конфиг).
   # Синхронизирую здесь, чтобы репозиторий не разъезжался с боевым сервером
   # и следующий git pull + cp не откатил модель обратно на deepseek.
-  default: openai/gpt-5.6-luna
+  #
+  # 2026-10-09: gpt-5.6-luna → gpt-6-luna. На OpenRouter $0.10/$0.50 за 1M
+  # (cache-read $0.01, cache-write $0.125) против $0.20/$1.20/$0.02 у 5.6 —
+  # вдвое дешевле на входе и в 2.4 раза на выходе, контекст тот же ~1.05M.
+  # ⚠️ Тариф действует для запросов до 272K входных токенов — нас не задевает,
+  # сжатие срабатывает на 60K (см. compression ниже).
+  default: openai/gpt-6-luna
   # запасная модель при 429/перегрузе провайдера — см. fallback_model ниже.
 
 # Автотранскрипция голосовых из Telegram — уже встроена в гейтвей
@@ -437,20 +443,24 @@ skills:
 # история диалога содержит зашифрованные reasoning-блоки luna, а mini не
 # может их переиграть. Одна модель для истории и для ревью убирает этот
 # класс ошибки структурно.
+#
+# 2026-10-09: вместе с основной моделью — на gpt-6-luna. Держать служебные
+# задачи на той же модели, что и диалог, обязательно по той же причине:
+# иначе вернётся 404 на чужих зашифрованных reasoning-блоках в истории.
 auxiliary:
   title_generation:
     provider: openrouter
-    model: openai/gpt-5.6-luna
+    model: openai/gpt-6-luna
     reasoning_effort: minimal
   background_review:
     provider: openrouter
-    model: openai/gpt-5.6-luna
+    model: openai/gpt-6-luna
     reasoning_effort: minimal
   memory_query_rewrite:
     provider: openrouter
-    model: openai/gpt-5.6-luna
+    model: openai/gpt-6-luna
     reasoning_effort: minimal
   web_extract:
     provider: openrouter
-    model: openai/gpt-5.6-luna
+    model: openai/gpt-6-luna
     reasoning_effort: minimal
